@@ -1,0 +1,160 @@
+/* Дизайн-токены (SPEC §12): минимализм + упрощённый neo-brutalism.
+   Компоненты берут значения только отсюда — так стиль меняется в одном месте. */
+
+:root {
+  /* Палитра */
+  --c-bg: #ffffff;
+  --c-surface: #ffffff;
+  --c-surface-2: #f5f5f4; /* подложки, hover у ghost-кнопок */
+  --c-text: #111111;
+  --c-muted: #57534e;
+  --c-border: #111111;
+  --c-line: #d6d3d1; /* тонкие разделители внутри карточек */
+
+  --c-green: #16a34a; /* успех, прогресс, «Знаю» */
+  --c-green-soft: #dcfce7;
+  --c-red: #dc2626; /* ошибки, опасные действия, «Не знаю» */
+  --c-red-soft: #fee2e2;
+  --c-amber: #d97706; /* «Затрудняюсь» */
+  --c-amber-soft: #fef3c7;
+  --c-focus: #2563eb;
+
+  /* Уровни SRS: 1 Новое → 5 Архив */
+  --c-level-1: #a8a29e;
+  --c-level-2: #f59e0b;
+  --c-level-3: #3b82f6;
+  --c-level-4: #16a34a;
+  --c-level-5: #7c3aed;
+
+  /* Обводки, тени, скругления */
+  --bw: 2px;
+  --bw-strong: 3px;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --shadow: 4px 4px 0 var(--c-border);
+  --shadow-sm: 2px 2px 0 var(--c-border);
+
+  /* Отступы — шкала 4px */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  /* Типографика */
+  --font: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 28px;
+  --fs-2xl: 40px;
+
+  /* Анимации: 200–300ms, ease-out или лёгкий spring */
+  --dur-fast: 150ms;
+  --dur: 220ms;
+  --dur-slow: 300ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --header-h: 64px;
+  --content-w: 1120px;
+
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--c-text);
+  background: var(--c-bg);
+  -webkit-font-smoothing: antialiased;
+  /* §12: основные разделы без скролла страницы — скроллятся только списки внутри */
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: var(--bw) solid var(--c-focus);
+  outline-offset: 2px;
+}
+
+/* Поля ввода — общий вид, чтобы не дублировать в каждом табе */
+.input {
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  background: var(--c-surface);
+  border: var(--bw) solid var(--c-border);
+  border-radius: var(--radius-sm);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.input:focus {
+  outline: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.muted {
+  color: var(--c-muted);
+}
+
+/* Скроллируемая область внутри раздела */
+.scroll {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+}

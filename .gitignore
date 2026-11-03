@@ -1,0 +1,11 @@
+.env
+node_modules/
+frontend/dist/
+backend/web/dist/*
+!backend/web/dist/.gitkeep
+__pycache__/
+.DS_Store
+
+# локальные файлы рабочего процесса — не публикуются
+CLAUDE.md
+.vscode/

@@ -1,0 +1,89 @@
+version: "2"
+
+# Один блок на модуль: каждый модуль получает свой пакет store
+# только со своими запросами. Схема общая — все миграции.
+# Новый модуль = скопировать блок, поменять queries/out.
+
+# Общие для всех модулей маппинги типов: по умолчанию pgx/v5 даёт pgtype.Timestamptz,
+# а в бизнес-коде удобнее time.Time (и *time.Time для NULL).
+overrides:
+  go:
+    overrides:
+      - db_type: "timestamptz"
+        go_type: "time.Time"
+      - db_type: "timestamptz"
+        nullable: true
+        go_type:
+          type: "time.Time"
+          pointer: true
+
+sql:
+  - engine: postgresql
+    queries: queries/words.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/words/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true # NULL → *T, а не pgtype.Int2 и т.п.
+
+  - engine: postgresql
+    queries: queries/training.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/training/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/groups.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/groups/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/stats.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/stats/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/achievements.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/achievements/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/settings.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/settings/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/importexport.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/importexport/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

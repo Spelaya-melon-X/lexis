@@ -1,0 +1,335 @@
+{
+  "app": {
+    "title": "Lexis",
+    "tagline": "Learn words every day"
+  },
+  "tabs": {
+    "add": "Cards",
+    "groups": "Groups",
+    "training": "Training",
+    "stats": "Stats",
+    "settings": "Settings"
+  },
+  "lang": {
+    "ru": "RU",
+    "en": "EN",
+    "switch": "Interface language"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "close": "Close",
+    "retry": "Retry",
+    "loading": "Loading…",
+    "words": {
+      "one": "{count} word",
+      "other": "{count} words"
+    },
+    "cards": {
+      "one": "{count} card",
+      "other": "{count} cards"
+    }
+  },
+  "levels": {
+    "1": "New",
+    "2": "Learning",
+    "3": "Known",
+    "4": "Master",
+    "5": "Archive"
+  },
+  "add": {
+    "title": "New cards",
+    "inputLabel": "Words — one per line",
+    "placeholder": "apple || яблоко || I eat an [apple] every day || #food",
+    "preview": "Preview",
+    "previewEmpty": "Start typing on the left — cards will appear here",
+    "parsing": "Parsing…",
+    "parseFailed": "Could not parse the text",
+    "errorsTitle": "Errors — these lines will not be saved",
+    "line": "line {line}",
+    "create": {
+      "one": "Create {count} card",
+      "other": "Create {count} cards"
+    },
+    "createNone": "Create cards",
+    "creating": "Creating cards…",
+    "shortcut": "⌘/Ctrl + Enter",
+    "created": "Done: {created} new, {merged} merged with existing",
+    "keptErrors": "Lines with errors stayed in the editor — fix them and create again",
+    "cardsCount": {
+      "one": "{count} card",
+      "other": "{count} cards"
+    },
+    "errorsCount": {
+      "one": "{count} error",
+      "other": "{count} errors"
+    },
+    "help": {
+      "title": "Format",
+      "line": "word || translation || examples || #groups",
+      "optional": "Examples and groups are optional: “apple || яблоко” is already a card.",
+      "examples": "Several examples — separated by <>, the highlighted word — in [brackets].",
+      "forms": "Three verb forms — joined by _: go_went_gone.",
+      "tags": "Groups — with or without #, separated by spaces or commas.",
+      "comments": "Empty lines and lines starting with // are skipped.",
+      "insertExample": "Insert example"
+    },
+    "exampleText": "// example — feel free to delete\napple || яблоко || I eat an [apple] every day <> An [apple] a day || #food #nouns\nrun || бежать || I [run] in the morning || #verbs\ngo_went_gone || идти || I [go] home <> I [went] home <> I have [gone] home || #verbs"
+  },
+  "groups": {
+    "empty": "No groups yet — add words with tags on the Cards tab",
+    "goAdd": "Go to cards",
+    "repeated": "Done today",
+    "notRepeated": "Not done",
+    "due": {
+      "one": "{count} due today",
+      "other": "{count} due today"
+    },
+    "select": "Pick a group to see its words and analytics",
+    "back": "All groups",
+    "train": "Train",
+    "rename": "Rename",
+    "color": "Group color",
+    "noColor": "No color",
+    "delete": "Delete group",
+    "deleteTitle": "Delete group “{name}”?",
+    "deleteBody": "Words and training history stay — only the group itself is removed.",
+    "deleted": "Group deleted",
+    "saved": "Saved",
+    "mastered": "Master + Archive",
+    "sessionsWeek": "This week",
+    "sessionsMonth": "This month",
+    "dueToday": "Due today",
+    "times": {
+      "one": "{count} time",
+      "other": "{count} times"
+    },
+    "productivity": "Productivity",
+    "productivityHint": "Share of “Know” per day",
+    "week": "Week",
+    "month": "Month",
+    "noSessions": "No training in this period",
+    "levels": "Levels",
+    "wordsTitle": "Words",
+    "wordsEmpty": "No words in this group"
+  },
+  "words": {
+    "edit": "Edit",
+    "delete": "Delete",
+    "unarchive": "Restore from archive",
+    "deleteTitle": "Delete “{term}”?",
+    "deleteBody": "The word and its answer history will be deleted permanently.",
+    "deleted": "Word deleted",
+    "unarchived": "Word is back at “Master” level",
+    "saved": "Word saved",
+    "editTitle": "Edit word",
+    "term": "Word",
+    "termHint": "Three verb forms — joined by _: go_went_gone",
+    "translation": "Translation",
+    "examples": "Examples — one per line, highlight in [brackets]",
+    "groups": "Groups — separated by spaces or commas"
+  },
+  "training": {
+    "group": "Group",
+    "chooseGroup": "Choose a group",
+    "noGroups": "No groups yet — add words with tags on the Cards tab",
+    "strategy": "Strategy",
+    "strategies": {
+      "en_ru": {
+        "title": "EN → RU",
+        "desc": "See the word — recall the translation"
+      },
+      "ru_en": {
+        "title": "RU → EN",
+        "desc": "See the translation — recall the word, all three forms for verbs"
+      },
+      "context": {
+        "title": "Context",
+        "desc": "A sentence with a highlighted word — recall the meaning"
+      }
+    },
+    "free": "Free practice",
+    "freeHint": "All words of the group, including the archive. Levels do not change.",
+    "start": "Start",
+    "nothingDue": "Everything in this group is reviewed for today",
+    "nothingDueHint": "You can practice freely — levels will not change.",
+    "startFree": "Free practice",
+    "back": "Back",
+    "promptTerm": "What does it mean?",
+    "promptTranslation": "How do you say it in English?",
+    "promptSentence": "What does the highlighted part mean?",
+    "yourAnswer": "Your answer (optional)",
+    "typed": "Your answer",
+    "show": "Show answer",
+    "showHint": "Enter / Space",
+    "good": "Know",
+    "hard": "Struggled",
+    "again": "Don't know",
+    "keysHint": "Keys 1 / 2 / 3",
+    "counter": "{done} of {total}",
+    "finish": "Finish",
+    "finishTitle": "Finish the session?",
+    "finishBody": "Answered cards count, the rest stay for later.",
+    "requeued": {
+      "one": "Comes back in {count} card",
+      "other": "Comes back in {count} cards"
+    },
+    "results": {
+      "title": "Session complete",
+      "freeNote": "Free practice — levels did not change",
+      "time": "Time",
+      "words": "Words",
+      "levelChanges": "Level changes",
+      "noChanges": "No level changes",
+      "again": "Train again",
+      "toGroups": "To groups"
+    }
+  },
+  "stats": {
+    "streak": "Streak",
+    "streakDays": {
+      "one": "{count} day",
+      "other": "{count} days"
+    },
+    "best": "best — {count}",
+    "today": "Today",
+    "wordsToday": "Words reviewed",
+    "timeToday": "Training time",
+    "groupsToday": "Groups done",
+    "learned": "Learned",
+    "learnedHint": "Master + Archive",
+    "calendar": "Activity calendar",
+    "calendarHint": "Click a day for details",
+    "less": "less",
+    "more": "more",
+    "dayWords": {
+      "one": "{count} word",
+      "other": "{count} words"
+    },
+    "day": "Day",
+    "dayEmpty": "No training on this day",
+    "byGroup": "By group",
+    "answers": "Answers",
+    "trends": "Trends",
+    "trendsWords": "words per day",
+    "trendsShare": "share of “Know”",
+    "week": "Week",
+    "month": "Month",
+    "levels": "All words by level",
+    "achievements": "Achievements",
+    "unlocked": "Unlocked {date}",
+    "progress": "{progress} of {target}"
+  },
+  "achievements": {
+    "first_session": {
+      "title": "First step",
+      "desc": "Finish your first session"
+    },
+    "streak_3": {
+      "title": "Warm-up",
+      "desc": "Train 3 days in a row"
+    },
+    "streak_7": {
+      "title": "Perfect week",
+      "desc": "Train 7 days in a row"
+    },
+    "streak_30": {
+      "title": "Iron habit",
+      "desc": "Train 30 days in a row"
+    },
+    "learned_10": {
+      "title": "First ten",
+      "desc": "Bring 10 words to “Master”"
+    },
+    "learned_50": {
+      "title": "Fifty",
+      "desc": "Bring 50 words to “Master”"
+    },
+    "learned_100": {
+      "title": "Hundred",
+      "desc": "Bring 100 words to “Master”"
+    },
+    "learned_500": {
+      "title": "Vocabulary",
+      "desc": "Bring 500 words to “Master”"
+    },
+    "first_archived_group": {
+      "title": "Topic closed",
+      "desc": "Archive every word of one group"
+    }
+  },
+  "settings": {
+    "language": "Interface language",
+    "limit": "New words per session",
+    "limitHint": "0–100. Reviews are not limited.",
+    "saved": "Settings saved",
+    "data": "Data",
+    "import": "Import",
+    "importHint": "CSV or a JSON word list is added to your words; a JSON backup replaces all data.",
+    "chooseFile": "Choose file",
+    "imported": "Import: {created} new, {merged} merged",
+    "importErrors": {
+      "one": "{count} line with an error skipped",
+      "other": "{count} lines with errors skipped"
+    },
+    "restored": "Backup restored: {words} words, {groups} groups, {sessions} sessions",
+    "restoreTitle": "Restore from backup?",
+    "restoreBody": "All current data and settings will be replaced with the file contents.",
+    "export": "Export",
+    "exportJson": "Full backup (JSON)",
+    "exportCsv": "Words (CSV)",
+    "danger": "Danger zone",
+    "reset": "Reset database",
+    "resetHint": "Deletes all words, groups, history and achievements. Settings stay.",
+    "resetTitle": "Reset the whole database?",
+    "resetBody": "This cannot be undone. You can download a backup first.",
+    "resetDone": "Database cleared"
+  },
+  "errors": {
+    "unknown": "Something went wrong",
+    "network": "Server is unreachable — is the app running?",
+    "bad_response": "Unexpected server response",
+    "internal": "Server error, see logs for details",
+    "db_unavailable": "Database is unavailable",
+    "not_found": "Not found",
+    "method_not_allowed": "Action is not supported",
+    "invalid_json": "Malformed request",
+    "body_too_large": "Text is too large",
+    "invalid_id": "Invalid identifier",
+    "too_many_fields": "Too many “||” fields (max 4)",
+    "missing_translation": "No translation: expected “word || translation”",
+    "empty_term": "Empty word",
+    "empty_translation": "Empty translation",
+    "invalid_verb_forms": "Verb forms: exactly three joined by “_”, e.g. go_went_gone",
+    "unbalanced_brackets": "Unclosed or extra bracket [ ]",
+    "empty_highlight": "Empty brackets [ ]",
+    "invalid_level": "Level must be 1 to 5",
+    "invalid_group": "Invalid group",
+    "duplicate_word": "This word with this translation already exists",
+    "not_archived": "Word is not archived",
+    "invalid_strategy": "Unknown strategy",
+    "invalid_answer": "Unknown answer",
+    "invalid_word": "Invalid word",
+    "word_not_in_session": "Word is not in this session",
+    "session_finished": "Session is already finished",
+    "invalid_range": "Invalid period",
+    "invalid_date": "Invalid date",
+    "invalid_group_name": "Group name is a single tag without spaces",
+    "invalid_color": "Color must be #rrggbb",
+    "duplicate_group": "A group with this name already exists",
+    "invalid_language": "Unknown language",
+    "invalid_new_words_limit": "New words limit is 0 to 100",
+    "missing_file": "Choose a file",
+    "empty_file": "File is empty",
+    "invalid_multipart": "Could not upload the file",
+    "invalid_csv": "File does not look like CSV",
+    "csv_missing_columns": "CSV needs term and translation columns",
+    "invalid_backup": "Backup file is corrupted",
+    "unsupported_backup_version": "Backup from an unsupported version",
+    "file_too_large": "File is larger than 20 MB",
+    "invalid_format": "Unknown format",
+    "confirm_required": "Confirmation required"
+  }
+}

@@ -1,0 +1,50 @@
+name: lexis
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lexis}
+      POSTGRES_USER: ${POSTGRES_USER:-lexis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lexis}
+      TZ: ${TZ:-Europe/Moscow}
+      PGTZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    # Раскомментируй, если нужно подключиться к БД из DBeaver/psql с хоста:
+    # ports:
+    #   - "127.0.0.1:5436:5432"   # 5433–5435 заняты другим проектом
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lexis-app:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      LEXIS_HTTP_ADDR: ":8080"
+      LEXIS_DB_DSN: "postgres://${POSTGRES_USER:-lexis}:${POSTGRES_PASSWORD:-lexis}@db:5432/${POSTGRES_DB:-lexis}?sslmode=disable"
+      LEXIS_TZ: ${TZ:-Europe/Moscow}
+      TZ: ${TZ:-Europe/Moscow}
+    ports:
+      # на хосте 8090 (8080 занят другим проектом); внутри контейнера сервер слушает :8080
+      - "127.0.0.1:${LEXIS_PORT:-8090}:8080"
+    healthcheck:
+      # в distroless нет curl/wget — бинарник сам умеет проверять /healthz
+      test: ["CMD", "/app/lexis", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  pgdata:
