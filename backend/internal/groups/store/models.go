@@ -13,11 +13,75 @@ type Achievement struct {
 	UnlockedAt time.Time
 }
 
+type Day struct {
+	Day       time.Time
+	Rating    *int16
+	Story     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type DayWin struct {
+	ID       int64
+	Day      time.Time
+	Position int16
+	Text     string
+}
+
+type DopamineSlot struct {
+	Day       time.Time
+	Slot      int16
+	Text      string
+	UpdatedAt time.Time
+}
+
 type Group struct {
 	ID        int64
 	Name      string
 	Color     *string
 	CreatedAt time.Time
+}
+
+type Habit struct {
+	ID           int64
+	Name         string
+	Kind         string
+	Color        *string
+	TrackTrigger bool
+	TrackRating  bool
+	TrackAmount  bool
+	Unit         string
+	Position     int32
+	ArchivedAt   *time.Time
+	CreatedAt    time.Time
+}
+
+type HabitCheckin struct {
+	HabitID   int64
+	Day       time.Time
+	Trigger   *string
+	Rating    *int16
+	Amount    *float64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type HabitGoal struct {
+	ID        int64
+	HabitID   *int64
+	Title     string
+	StartDay  time.Time
+	EndDay    time.Time
+	CreatedAt time.Time
+}
+
+type HabitNote struct {
+	ID        int64
+	HabitID   *int64
+	Kind      string
+	Body      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Review struct {
@@ -48,6 +112,20 @@ type TrainingSession struct {
 	Hard        int32
 	Again       int32
 	DurationSec int32
+}
+
+type WeekReview struct {
+	WeekStart time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type WeekReviewBlock struct {
+	ID         int64
+	WeekStart  time.Time
+	Position   int16
+	Topic      string
+	Conclusion string
 }
 
 type Word struct {

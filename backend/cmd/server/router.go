@@ -12,7 +12,9 @@ import (
 	"lexis/internal/achievements"
 	"lexis/internal/app"
 	"lexis/internal/groups"
+	"lexis/internal/habits"
 	"lexis/internal/importexport"
+	"lexis/internal/journal"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/eventbus"
 	"lexis/internal/platform/httpx"
@@ -29,6 +31,7 @@ import (
 // свой экземпляр через узкие интерфейсы, а не тянут модуль words целиком.
 func modules(pool *pgxpool.Pool, clk clock.Clock, bus *eventbus.Bus) []app.Module {
 	wordsSvc := words.NewService(pool, clk, bus)
+	habitsSvc := habits.NewService(pool, clk)
 	return []app.Module{
 		words.New(pool, clk, bus),
 		groups.New(pool, clk, wordsSvc),
@@ -37,6 +40,8 @@ func modules(pool *pgxpool.Pool, clk clock.Clock, bus *eventbus.Bus) []app.Modul
 		achievements.New(pool, clk, bus), // подписывается на шину — до старта HTTP
 		settings.New(pool),
 		importexport.New(pool, clk, wordsSvc),
+		journal.New(pool, clk, habitsSvc), // сводке недели нужны привычки
+		habits.New(pool, clk),
 	}
 }
 

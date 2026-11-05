@@ -50,6 +50,8 @@ type RestoreCounts struct {
 	Sessions     int `json:"sessions"`
 	Reviews      int `json:"reviews"`
 	Achievements int `json:"achievements"`
+	Days         int `json:"days"`   // 0 и для бэкапа без секции journal (v1)
+	Habits       int `json:"habits"` // то же для секции habits
 }
 
 // Import определяет формат по содержимому (см. DetectFormat) и импортирует.
@@ -183,7 +185,12 @@ func (s *Service) ExportBackup(ctx context.Context) (Backup, error) {
 		for _, st := range settings {
 			b.Settings[st.Key] = json.RawMessage(st.Value)
 		}
-		return nil
+
+		if b.Journal, err = exportJournal(ctx, q); err != nil {
+			return err
+		}
+		b.Habits, err = exportHabits(ctx, q)
+		return err
 	})
 	if err != nil {
 		return Backup{}, fmt.Errorf("export backup: %w", err)
@@ -193,6 +200,7 @@ func (s *Service) ExportBackup(ctx context.Context) (Backup, error) {
 
 // Restore заменяет все данные (включая settings) содержимым бэкапа — одной транзакцией:
 // упало посередине — в базе остаётся то, что было. Бэкап должен пройти validateBackup.
+// Разделы v2 (journal) заменяются, только если их секция есть в файле (§17.10).
 func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) {
 	if err := validateBackup(b); err != nil {
 		return RestoreCounts{}, err
@@ -284,6 +292,18 @@ func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) 
 		}
 
 		c = RestoreCounts{Groups: len(b.Groups), Words: len(b.Words), Sessions: len(b.Sessions), Reviews: len(reviews), Achievements: len(b.Achievements)}
+		if b.Journal != nil {
+			if err := restoreJournal(ctx, q, *b.Journal); err != nil {
+				return fmt.Errorf("journal: %w", err)
+			}
+			c.Days = len(b.Journal.Days)
+		}
+		if b.Habits != nil {
+			if err := restoreHabits(ctx, q, *b.Habits); err != nil {
+				return fmt.Errorf("habits: %w", err)
+			}
+			c.Habits = len(b.Habits.Habits)
+		}
 		return nil
 	})
 	if err != nil {
@@ -296,10 +316,229 @@ func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) 
 	return c, nil
 }
 
-// Reset удаляет все данные, кроме настроек (§12).
-func (s *Service) Reset(ctx context.Context) error {
-	if err := store.New(s.pool).TruncateData(ctx); err != nil {
-		return fmt.Errorf("reset: %w", err)
+func exportJournal(ctx context.Context, q *store.Queries) (*BackupJournal, error) {
+	days, err := q.ListAllDays(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("days: %w", err)
+	}
+	j := &BackupJournal{Days: make([]BackupDay, len(days))}
+	// Ключ — строка, а не time.Time: == у time.Time сравнивает ещё и *Location.
+	byDay := make(map[string]*BackupDay, len(days))
+	for i, d := range days {
+		j.Days[i] = BackupDay{
+			Day: clock.FormatDate(d.Day), Rating: d.Rating, Story: d.Story, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+			Wins: []string{}, Dopamine: []BackupDopamine{},
+		}
+		byDay[j.Days[i].Day] = &j.Days[i]
+	}
+	wins, err := q.ListAllWins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("wins: %w", err)
+	}
+	for _, w := range wins {
+		d := byDay[clock.FormatDate(w.Day)]
+		d.Wins = append(d.Wins, w.Text) // FK гарантирует, что день есть
+	}
+	slots, err := q.ListAllDopamine(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("dopamine: %w", err)
+	}
+	for _, sl := range slots {
+		d := byDay[clock.FormatDate(sl.Day)]
+		d.Dopamine = append(d.Dopamine, BackupDopamine{Slot: sl.Slot, Text: sl.Text, UpdatedAt: sl.UpdatedAt})
+	}
+	ws, err := q.ListAllWeeks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("weeks: %w", err)
+	}
+	j.Weeks = make([]BackupWeek, len(ws))
+	byWeek := make(map[string]*BackupWeek, len(ws))
+	for i, w := range ws {
+		j.Weeks[i] = BackupWeek{WeekStart: clock.FormatDate(w.WeekStart), Blocks: []BackupBlock{}, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}
+		byWeek[j.Weeks[i].WeekStart] = &j.Weeks[i]
+	}
+	bs, err := q.ListAllWeekBlocks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("week blocks: %w", err)
+	}
+	for _, b := range bs {
+		w := byWeek[clock.FormatDate(b.WeekStart)] // FK гарантирует, что неделя есть
+		w.Blocks = append(w.Blocks, BackupBlock{Topic: b.Topic, Conclusion: b.Conclusion})
+	}
+	return j, nil
+}
+
+func restoreJournal(ctx context.Context, q *store.Queries, j BackupJournal) error {
+	if err := q.TruncateJournal(ctx); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	days := make([]store.RestoreDaysParams, len(j.Days))
+	var wins []store.RestoreWinsParams
+	var slots []store.RestoreDopamineParams
+	for i, d := range j.Days {
+		day, _ := clock.ParseDate(d.Day) // проверено в validateBackup
+		days[i] = store.RestoreDaysParams{Day: day, Rating: d.Rating, Story: d.Story, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt}
+		for pos, w := range d.Wins {
+			wins = append(wins, store.RestoreWinsParams{Day: day, Position: int16(pos), Text: w})
+		}
+		for _, sl := range d.Dopamine {
+			slots = append(slots, store.RestoreDopamineParams{Day: day, Slot: sl.Slot, Text: sl.Text, UpdatedAt: sl.UpdatedAt})
+		}
+	}
+	// Дни — раньше пунктов и квадратиков (FK). Значения (оценка 1..10, слот 0..6, длина) проверяют CHECK-и.
+	if _, err := q.RestoreDays(ctx, days); err != nil {
+		return fmt.Errorf("days: %w", err)
+	}
+	if _, err := q.RestoreWins(ctx, wins); err != nil {
+		return fmt.Errorf("wins: %w", err)
+	}
+	if _, err := q.RestoreDopamine(ctx, slots); err != nil {
+		return fmt.Errorf("dopamine: %w", err)
+	}
+
+	weeks := make([]store.RestoreWeeksParams, len(j.Weeks))
+	var blocks []store.RestoreWeekBlocksParams
+	for i, w := range j.Weeks {
+		monday, _ := clock.ParseDate(w.WeekStart) // проверено в validateBackup
+		weeks[i] = store.RestoreWeeksParams{WeekStart: monday, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}
+		for pos, b := range w.Blocks {
+			blocks = append(blocks, store.RestoreWeekBlocksParams{WeekStart: monday, Position: int16(pos), Topic: b.Topic, Conclusion: b.Conclusion})
+		}
+	}
+	if _, err := q.RestoreWeeks(ctx, weeks); err != nil {
+		return fmt.Errorf("weeks: %w", err)
+	}
+	if _, err := q.RestoreWeekBlocks(ctx, blocks); err != nil {
+		return fmt.Errorf("week blocks: %w", err)
+	}
+	return nil
+}
+
+func exportHabits(ctx context.Context, q *store.Queries) (*BackupHabits, error) {
+	hs, err := q.ListAllHabits(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("habits: %w", err)
+	}
+	out := &BackupHabits{
+		Habits: make([]BackupHabit, len(hs)), Checkins: []BackupCheckin{}, Goals: []BackupGoal{}, Notes: []BackupNote{},
+	}
+	for i, h := range hs {
+		out.Habits[i] = BackupHabit{
+			ID: h.ID, Name: h.Name, Kind: h.Kind, Color: h.Color, TrackTrigger: h.TrackTrigger, TrackRating: h.TrackRating,
+			TrackAmount: h.TrackAmount, Unit: h.Unit, Position: h.Position, ArchivedAt: h.ArchivedAt, CreatedAt: h.CreatedAt,
+		}
+	}
+	cs, err := q.ListAllCheckins(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checkins: %w", err)
+	}
+	for _, c := range cs {
+		out.Checkins = append(out.Checkins, BackupCheckin{
+			HabitID: c.HabitID, Day: clock.FormatDate(c.Day), Trigger: c.Trigger, Rating: c.Rating, Amount: c.Amount,
+			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		})
+	}
+	gs, err := q.ListAllHabitGoals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("goals: %w", err)
+	}
+	for _, g := range gs {
+		out.Goals = append(out.Goals, BackupGoal{
+			HabitID: g.HabitID, Title: g.Title, From: clock.FormatDate(g.StartDay), To: clock.FormatDate(g.EndDay), CreatedAt: g.CreatedAt,
+		})
+	}
+	ns, err := q.ListAllHabitNotes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("notes: %w", err)
+	}
+	for _, n := range ns {
+		out.Notes = append(out.Notes, BackupNote{HabitID: n.HabitID, Kind: n.Kind, Body: n.Body, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt})
+	}
+	return out, nil
+}
+
+func restoreHabits(ctx context.Context, q *store.Queries, h BackupHabits) error {
+	if err := q.TruncateHabits(ctx); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	newID := make(map[int64]int64, len(h.Habits)) // id в файле → новый id
+	for _, x := range h.Habits {
+		id, err := q.RestoreHabit(ctx, store.RestoreHabitParams{
+			Name: x.Name, Kind: x.Kind, Color: x.Color, TrackTrigger: x.TrackTrigger, TrackRating: x.TrackRating,
+			TrackAmount: x.TrackAmount, Unit: x.Unit, Position: x.Position, ArchivedAt: x.ArchivedAt, CreatedAt: x.CreatedAt,
+		})
+		if err != nil {
+			return fmt.Errorf("habit %q: %w", x.Name, err)
+		}
+		newID[x.ID] = id
+	}
+	remap := func(id *int64) *int64 {
+		if id == nil {
+			return nil
+		}
+		v := newID[*id]
+		return &v
+	}
+
+	cs := make([]store.RestoreCheckinsParams, len(h.Checkins))
+	for i, c := range h.Checkins {
+		day, _ := clock.ParseDate(c.Day) // проверено в validateBackup
+		cs[i] = store.RestoreCheckinsParams{
+			HabitID: newID[c.HabitID], Day: day, Trigger: c.Trigger, Rating: c.Rating, Amount: c.Amount,
+			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		}
+	}
+	if _, err := q.RestoreCheckins(ctx, cs); err != nil {
+		return fmt.Errorf("checkins: %w", err)
+	}
+	gs := make([]store.RestoreHabitGoalsParams, len(h.Goals))
+	for i, g := range h.Goals {
+		from, _ := clock.ParseDate(g.From)
+		to, _ := clock.ParseDate(g.To)
+		gs[i] = store.RestoreHabitGoalsParams{HabitID: remap(g.HabitID), Title: g.Title, StartDay: from, EndDay: to, CreatedAt: g.CreatedAt}
+	}
+	if _, err := q.RestoreHabitGoals(ctx, gs); err != nil {
+		return fmt.Errorf("goals: %w", err)
+	}
+	ns := make([]store.RestoreHabitNotesParams, len(h.Notes))
+	for i, n := range h.Notes {
+		ns[i] = store.RestoreHabitNotesParams{HabitID: remap(n.HabitID), Kind: n.Kind, Body: n.Body, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
+	}
+	if _, err := q.RestoreHabitNotes(ctx, ns); err != nil {
+		return fmt.Errorf("notes: %w", err)
+	}
+	return nil
+}
+
+// Что очищает Reset (§17.10). Настройки не трогает ни один вариант.
+const (
+	ScopeEnglish = "english" // слова, группы, история, достижения — «Очистить» в настройках английского
+	ScopeAll     = "all"     // + дневник и привычки — «Очистить всё» в глобальных настройках
+)
+
+// Reset очищает данные в пределах scope одной транзакцией.
+func (s *Service) Reset(ctx context.Context, scope string) error {
+	if scope != ScopeEnglish && scope != ScopeAll {
+		return httpx.BadRequest("invalid_scope", "scope must be english or all")
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		if err := q.TruncateData(ctx); err != nil {
+			return fmt.Errorf("english: %w", err)
+		}
+		if scope != ScopeAll {
+			return nil
+		}
+		if err := q.TruncateJournal(ctx); err != nil {
+			return fmt.Errorf("journal: %w", err)
+		}
+		if err := q.TruncateHabits(ctx); err != nil {
+			return fmt.Errorf("habits: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("reset %s: %w", scope, err)
 	}
 	return nil
 }

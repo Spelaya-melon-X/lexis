@@ -3,11 +3,25 @@ import type {
   AnswerResult,
   BulkResult,
   Calendar,
+  Checkin,
+  CheckinInput,
+  Day,
+  DayPatch,
   FinishResult,
   Group,
   GroupDetail,
   GroupPatch,
+  Goal,
+  GoalInput,
+  Habit,
+  HabitStat,
+  HabitFields,
+  HabitPatch,
   ImportResult,
+  JournalDays,
+  Note,
+  NoteFilter,
+  NoteInput,
   Overview,
   ParseResult,
   Range,
@@ -19,6 +33,8 @@ import type {
   Word,
   WordFilter,
   WordPatch,
+  Week,
+  WeekBlock,
 } from './types'
 
 /**
@@ -133,6 +149,39 @@ export const api = {
     get: () => get<Settings>('/settings'),
     update: (p: Partial<Settings>) => request<Settings>('PUT', '/settings', p),
   },
+  journal: {
+    day: (day: string) => get<Day>(`/journal/days/${day}`),
+    update: (day: string, p: DayPatch) => request<Day>('PATCH', `/journal/days/${day}`, p),
+    /** Пустой text гасит квадратик. */
+    dopamine: (day: string, slot: number, text: string) => request<Day>('PUT', `/journal/days/${day}/dopamine/${slot}`, { text }),
+    days: (from?: string, to?: string) => get<JournalDays>(`/journal/days${qs({ from, to })}`),
+    week: (monday: string) => get<Week>(`/journal/weeks/${monday}`),
+    /** Блоки заменяются целиком; [] — удалить анализ недели. */
+    saveWeek: (monday: string, blocks: WeekBlock[]) => request<Week>('PUT', `/journal/weeks/${monday}`, { blocks }),
+  },
+  habits: {
+    list: (archived = false) => get<{ habits: Habit[] }>(`/habits${qs({ archived: archived ? 'true' : undefined })}`).then((r) => r.habits),
+    create: (f: HabitFields) => post<Habit>('/habits', f),
+    update: (id: number, p: HabitPatch) => request<Habit>('PATCH', `/habits/${id}`, p),
+    remove: (id: number) => request<void>('DELETE', `/habits/${id}`),
+    /** Полный список id всех привычек (и архивных) в новом порядке. */
+    reorder: (ids: number[]) => request<void>('PUT', '/habits/order', { ids }),
+    stats: (from: string, to: string) =>
+      get<{ from: string; to: string; habits: HabitStat[] }>(`/habits/stats${qs({ from, to })}`).then((r) => r.habits),
+    checkins: (from: string, to: string) =>
+      get<{ checkins: Checkin[] }>(`/habits/checkins${qs({ from, to })}`).then((r) => r.checkins),
+    saveDay: (day: string, checkins: CheckinInput[]) =>
+      request<{ checkins: Checkin[] }>('PUT', `/habits/checkins/${day}`, { checkins }).then((r) => r.checkins),
+    /** Без окна — все цели. */
+    goals: (from?: string, to?: string) => get<{ goals: Goal[] }>(`/habits/goals${qs({ from, to })}`).then((r) => r.goals),
+    createGoal: (g: GoalInput) => post<Goal>('/habits/goals', g),
+    updateGoal: (id: number, g: GoalInput) => request<Goal>('PUT', `/habits/goals/${id}`, g),
+    removeGoal: (id: number) => request<void>('DELETE', `/habits/goals/${id}`),
+    notes: (f: NoteFilter = {}) => get<{ notes: Note[]; next: number | null }>(`/habits/notes${qs({ ...f })}`),
+    createNote: (n: NoteInput) => post<Note>('/habits/notes', n),
+    updateNote: (id: number, n: NoteInput) => request<Note>('PUT', `/habits/notes/${id}`, n),
+    removeNote: (id: number) => request<void>('DELETE', `/habits/notes/${id}`),
+  },
   data: {
     import: (file: File) => {
       const fd = new FormData()
@@ -141,6 +190,7 @@ export const api = {
     },
     /** Экспорт — обычная ссылка на скачивание (браузер сам сохранит файл по Content-Disposition). */
     exportUrl: (format: 'json' | 'csv') => `/api/data/export${qs({ format })}`,
-    reset: () => post<void>('/data/reset', { confirm: true }),
+    /** english — только английский; all — ещё дневник и привычки. Настройки не трогает. */
+    reset: (scope: 'english' | 'all') => post<void>('/data/reset', { confirm: true, scope }),
   },
 }

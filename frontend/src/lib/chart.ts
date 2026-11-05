@@ -52,19 +52,21 @@ export interface Bar {
 
 /**
  * Столбики для неотрицательных значений: максимум — во всю высоту, 0 — без столбика.
- * gap — доля ширины слота под промежуток (0..1).
+ * gap — доля ширины слота под промежуток (0..1). scaleMax — фиксированная шкала
+ * (дофамин 0..7: «2» не должно выглядеть полным столбиком, если это максимум недели);
+ * без него шкала — по самому большому значению. Значения выше scaleMax прижимаются.
  */
-export function bars(values: number[], box: Box, gap = 0.3): Bar[] {
+export function bars(values: number[], box: Box, gap = 0.3, scaleMax?: number): Bar[] {
   const n = values.length
   if (n === 0) return []
-  const max = Math.max(...values, 0)
+  const max = scaleMax ?? Math.max(...values, 0)
   const slot = (box.width - 2 * box.padX) / n
   const w = r1(slot * (1 - gap))
   const innerH = box.height - 2 * box.padY
   const out: Bar[] = []
   values.forEach((v, i) => {
     if (v <= 0 || max === 0) return
-    const h = r1((v / max) * innerH)
+    const h = r1((Math.min(v, max) / max) * innerH)
     out.push({ index: i, x: r1(box.padX + i * slot + (slot - w) / 2), y: r1(box.height - box.padY - h), w, h })
   })
   return out

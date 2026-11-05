@@ -13,6 +13,7 @@
 Никаких внешних API: переводы и примеры пользователь готовит заранее (обычно через Claude) и вставляет текстом.
 
 Будущее (НЕ реализуем сейчас, но архитектура должна позволять добавить модулем): планер дня, To-Do, трекер привычек.
+**v2 (готово, 2026-11-05):** приложение — личный трекер: разделы «Английский», «День», «Привычки» и ⚙, см. §17.
 
 ---
 
@@ -81,7 +82,7 @@ lexis/
     └── src/
         ├── App.svelte  app.css  main.ts
         ├── lib/{api,i18n,state,anim,components}/
-        └── tabs/{AddWords,Groups,Training,Stats,Settings}/
+        └── sections/english/{AddWords,Groups,Training,Stats,Settings}/   (до v2 — tabs/)
 ```
 
 ---
@@ -261,7 +262,7 @@ UI: 3D-flip карточки, прогресс-бар, экран результ
 
 ## 10. БД
 
-Полная схема: `backend/migrations/0001_init.sql` (до первого релиза правим её на месте). Кратко:
+Полная схема: `backend/migrations/0001_init.sql`. С v2 (§17) приложение в ежедневном использовании: `0001` не правим, изменения — только новыми миграциями. Кратко:
 
 ```sql
 words            (id, term, forms TEXT[], translation, level SMALLINT 1..5, streak SMALLINT,
@@ -330,7 +331,8 @@ POST /api/data/import            multipart, поле "file" (≤ 20 МБ), фо�
                                  400 missing_file | empty_file | invalid_multipart | invalid_csv | csv_missing_columns | invalid_json
                                      | invalid_backup | unsupported_backup_version; 413 file_too_large
 GET  /api/data/export?format=json|csv   (по умолчанию json — бэкап) → файл (Content-Disposition: lexis-backup-YYYY-MM-DD.json | lexis-words-…csv)
-POST /api/data/reset             {"confirm": true} → 204   (400 confirm_required; подтверждение пользователя — на фронте)
+POST /api/data/reset             {"confirm": true, "scope"?: "english" | "all"} → 204   (400 confirm_required | invalid_scope; подтверждение — на фронте)
+                                 english (по умолчанию) — слова, группы, история, достижения; all — ещё дни, недели, привычки (§17.10). settings остаются.
 ```
 Префикс `/api/data` вместо `/api/import`, `/api/export`, `/api/admin`: модуль монтируется под `/api/<Name>` (§3), а import/export/reset — один модуль.
 Неизвестный `/api/...` → 404 `not_found` JSON, не тот метод → 405 `method_not_allowed`; `GET /healthz` пингует БД (503 `db_unavailable`).
@@ -346,12 +348,14 @@ POST /api/data/reset             {"confirm": true} → 204   (400 confirm_requir
 - Карточки: белые с чёрной обводкой или лёгкой жёсткой тенью. Кнопки плоские, чёткие границы, hover — смена цвета/лёгкий сдвиг.
 - Шрифт: Inter (локально в бандле, офлайн). Иконки линейные минималистичные (inline SVG).
 - ЦА 16–26 лет.
-- **Навигация:** табы — Карточки (ввод) · Группы · Тренировка · Статистика · Настройки. Основные разделы без скролла страницы; внутри разделов скролл для длинных списков ок.
+- **Навигация:** с v2 — разделы в шапке + подразделы в сайдбаре (§17.1); у английского: Новые (ввод) · Группы · Тренировка · Статистика · Настройки. Основные разделы без скролла страницы; внутри разделов скролл для длинных списков ок.
 - **Анимации:** простые — fade, slide, scale; 200–300ms; ease-out или лёгкий spring. Переключение табов — плавное появление; карточка — 3D flip; добавление слова — fade-in; смена уровня — анимация прогресс-бара.
 - **i18n:** RU / EN, переключатель в шапке. Все тексты UI — через словари `lib/i18n/{ru,en}.json`.
 
 ### Settings
-Язык; лимит новых слов за сессию; импорт/экспорт CSV/JSON; очистка базы.
+С v2 разделены (§17.1): ⚙ → Общие (язык) и ⚙ → Данные (полный бэкап, восстановление, «Очистить всё»);
+Английский → Настройки — лимит новых слов, импорт/экспорт слов (CSV / JSON-список), «Очистить английский».
+Файл бэкапа в импорте слов не восстанавливается — подсказка «восстанавливай в ⚙ → Данные».
 Ключи в `settings` (JSONB): `language` (`"ru"` | `"en"`, по умолчанию `"ru"`), `new_words_limit` (число 0..100, по умолчанию 10; читает training).
 
 ---
@@ -502,7 +506,7 @@ POST /api/data/reset             {"confirm": true} → 204   (400 confirm_requir
 
 ## 16. Конвенции фронтенда
 
-- **Структура:** `src/lib/{api,i18n,state,components}` — общее, `src/tabs/<Tab>/` — экраны. Логика, которую можно проверить без DOM, — в `.ts`
+- **Структура:** `src/lib/{api,i18n,state,components}` — общее, `src/sections/<section>/<Page>/` — экраны, `src/sections/nav.ts` — карта навигации. Логика, которую можно проверить без DOM, — в `.ts`
   рядом с `*.test.ts` (vitest); компоненты проверяются глазами.
 - **Состояние:** runes в модулях `*.svelte.ts` (`route`, `toasts`, `i18n`) — объект с геттерами поверх `$state`, без store-библиотек.
 - **API:** только через `api.*` из `lib/api/client.ts`; ошибки — `ApiError{status, code}`, текст для пользователя — `errorText(e)` (i18n `errors.<code>`),
@@ -513,3 +517,273 @@ POST /api/data/reset             {"confirm": true} → 204   (400 confirm_requir
 - **Стиль:** значения только из токенов `app.css` (`--c-*`, `--s-*`, `--bw`, `--shadow`, `--dur*`); анимации 200–300ms, `prefers-reduced-motion` их гасит.
 - **Зависимости:** TypeScript закреплён на 6.x — `svelte-check` пока не поддерживает TS 7.
 
+
+---
+
+## 17. Трекер жизни (v2)
+
+> Согласовано 2026-11-03: все вопросы Q1–Q14 приняты по рекомендации (✅), Markdown/формулы — убраны (§17.6).
+
+Lexis перестаёт быть только «английским»: это личный трекер, где английский — один из разделов.
+Существующий функционал и данные не меняются; новое — новыми модулями `app.Module` и **новыми** миграциями
+(`0001_init.sql` больше не правим: приложением ежедневно пользуются, правило §10 «правим на месте» отменено).
+
+### 17.1 Навигация
+
+Двухуровневая: шапка (текущий дизайн) = разделы, слева сайдбар = подразделы раздела.
+
+| Раздел (шапка) | Подразделы (сайдбар) | Хэш |
+|---|---|---|
+| Английский | Новые · Группы · Тренировка · Статистика · Настройки | `#/english/add`, `#/english/groups[/<id>]`, `#/english/training[/<groupId>]`, `#/english/stats`, `#/english/settings` |
+| День | День (сегодня или выбранная дата) · Календарь · Неделя (анализ) · Статистика | `#/day/entry[/<YYYY-MM-DD>]` (без даты — сегодня), `#/day/calendar[/<YYYY-MM>]`, `#/day/week[/<понедельник YYYY-MM-DD>]`, `#/day/stats` |
+| Привычки | Отметки · Календарь · Цели · Наблюдения · Мои привычки | `#/habits/check[/<YYYY-MM-DD>]`, `#/habits/calendar[/<YYYY-MM>]`, `#/habits/goals`, `#/habits/notes`, `#/habits/manage` |
+| ⚙ (иконка справа в шапке, рядом с RU/EN) ✅ | Общие · Данные | `#/settings/general`, `#/settings/data` |
+
+- Формат хэша: `#/<section>/<page>/<rest>`; неизвестный подраздел → первый в разделе (хвост отбрасывается), мусор → `#/english/add`.
+  Реализация: `lib/state/route.ts` (`SECTIONS`, `parseHash`, `toHash`; `Route` — размеченное объединение, чужой подраздел — ошибка типов),
+  карта «подраздел → иконка, i18n-ключ, компонент» — `sections/nav.ts`.
+- **Редирект старых ссылок** (`history.replaceState`, без записи в историю и без лишнего `hashchange`): `#add` → `#/english/add`, `#groups/12` → `#/english/groups/12`,
+  `#training/5`, `#stats`, `#settings` — аналогично. Любой неканонический хэш заменяется на `toHash(parseHash(hash))`. Table-driven тест на все старые формы.
+- Последняя открытая страница каждого раздела запоминается (localStorage `lexis.lastPages`): клик по разделу в шапке возвращает туда, где был;
+  ссылка в сайдбаре ведёт на подраздел без хвоста («Группы» из открытой группы → список).
+- Узкое окно (< 860px): в шапке только иконки разделов, сайдбар сворачивается в колонку иконок.
+- **Глобальные настройки:** язык; бэкап/восстановление всего; очистка. Настройки английского (`#/english/settings`):
+  лимит новых слов, импорт/экспорт слов CSV/JSON-списком, «Очистить английский». Разделено в фазе 5 ✅.
+- ✅ Q7 Общая статистика (серии, активность по всем разделам) — пока нет; у каждого раздела своя «Статистика».
+  Позже можно добавить раздел «Обзор» (дашборд «сегодня»: due-слова, оценка дня, неотмеченные привычки).
+
+### 17.2 День (модуль `journal`)
+
+Запись дня — по дате (`DATE` в TZ пользователя, «сегодня» — из `clock`). Создаётся лениво при первой записи.
+
+- **Оценка дня** 1–10 (или не оценён). Клик по той же оценке — снять.
+- **«Что классного сделал»** — список коротких пунктов (≤ 200 символов, ≤ 30 за день): добавить (Enter) / править (клик по тексту; пустой = удалить) / удалить / переставить.
+  Любое изменение отправляет список целиком; пустые пункты бэк выбрасывает.
+- **Рассказ** — свободный текст (§17.6, ≤ 20 000 символов), автосохранение через 1 с паузы, при уходе из поля и при смене дня + индикатор «сохранено».
+  Источник правды для рассказа — поле: ответы сервера его не перезаписывают (иначе ответ на старый запрос откатил бы допечатанное).
+- **Дофаминовая шкала** — 7 квадратиков. Клик → поле ввода (короткий текст ≤ 140 символов), Enter — сохранить;
+  заполненный квадратик «загорается» (зелёный, scale-анимация). Очистить текст = погасить. Уровень дня = число заполненных (0–7).
+  - ✅ Q1 всегда ровно 7 на день; в квадратике один пункт (одна строка); править/очищать можно; позиция квадратика
+    не важна для уровня (заполнять можно в любом порядке).
+  - ✅ Q2 дофамин — часть раздела «День» (блок на странице дня), не отдельный раздел.
+- Навигация по датам: ← / → (на день), «Сегодня», выбор даты (нативный пикер по клику на заголовок); будущее и мусор в адресе → сегодня.
+  Календарь месяца (`#/day/calendar[/YYYY-MM]`): клетка — цвет по оценке (1–3 красный, 4–6 жёлтый, 7–10 зелёный), число оценки,
+  7 делений дофамина; сверху — дней с записями, средняя оценка (по оценённым), средний дофамин (по дням с записями — пустой день значит «не вёл», а не 0).
+- Остальные изменения — оптимистично: интерфейс меняется сразу, ошибка → тост и перечитывание дня.
+- Раскладка страницы дня (2026-11-03): две независимые колонки по половине ширины — слева «Оценка» + «Что классного», справа «Дофамин» + «Привычки»;
+  «Рассказ» — на всю ширину снизу; уже 960px — одна колонка. Шкала оценки 1–10 — квадратные ячейки; в карточке уже 340px — два ряда по 5 (`@container`).
+- Прошлые дни можно дополнять. ✅ Q11 Будущие даты — запрещено (400 `future_day`): оценивать день, который не наступил, бессмысленно.
+- ✅ Q9 Отметки привычек на странице дня — компактный блок «Привычки» (что отмечено за день) со ссылкой на `#/habits/check/<day>`, без редактирования там. Делается в фазе 3.
+
+### 17.3 Недельный анализ (модуль `journal`)
+
+- Неделя — с **понедельника** (как в группах §5). Ключ — дата понедельника.
+- Запись = упорядоченный список блоков `{topic: «О чём» (≤ 200), conclusion: «Вывод» (≤ 20 000, простой текст)}`, ≤ 30 блоков:
+  добавить / удалить / переставить (кнопки ↑↓, без drag&drop-библиотек). Сохраняется целиком кнопкой «Сохранить» (⌘/Ctrl+S; PUT заменяет список);
+  пустые блоки выкидываются; пустой список удаляет анализ недели. Смена недели с несохранёнными правками — подтверждение.
+- `#/day/week[/<понедельник>]` (любой день в адресе приводится к понедельнику своей недели; будущее → текущая).
+  Слева — анализ (3/5 ширины), справа — сводка недели: средние (дней с записями, оценка, дофамин), график недели (`DayChart`),
+  выполнение привычек (`HabitStats`), цели, пересекающие неделю.
+- Будущие недели писать нельзя (`future_day`), прошлые — можно.
+- ✅ Q3 писать можно в любой день, в т.ч. текущей недели; в пт/сб/вс текущей недели, пока анализа нет, — подсказка «пора подвести итоги».
+
+### 17.4 Привычки (модуль `habits`)
+
+**Привычка:** название (1–60 символов, уникальное без учёта регистра, пробелы схлопываются), тип `positive` | `negative`, цвет (палитра групп), опциональные поля:
+`trackTrigger` (триггер, текст ≤ 200), `trackRating` (оценка 1–10), `trackAmount` (количество, число 0..1 000 000, дробное, + `unit` — свободный текст ≤ 20: «км», «стаканов»).
+Флаги можно менять потом: старые значения остаются в БД, валидация действует на новые отметки (пересохранение дня отправляет только включённые поля).
+**Тип после создания не меняется**: от него зависит смысл старых отметок («сделал» / «сорвался»).
+`startDay` — дата создания в TZ пользователя: до неё у негативной привычки день не считается «удержался».
+Порядок — ↑↓ в «Мои привычки» (`PUT /order` с полным списком id, архивные тоже).
+✅ Q12 Удаление — «архивировать» (пропадает из отметок, история остаётся) + полноценное удаление с подтверждением.
+
+**Отметка за день** (`#/habits/check[/YYYY-MM-DD]`): форма-список активных привычек (+ архивные, если у них уже есть отметка в этот день);
+у каждой — «Сделал» / «Сорвался» + включённые поля → одна кнопка «Сохранить» (⌘/Ctrl+S) на все изменённые строки (пунктирная рамка).
+Сохранение — одна транзакция: ошибка в любой строке не пишет ничего. Количество принимает «5,5» и «5.5».
+Смена даты с несохранёнными правками — подтверждение; закрытие вкладки — предупреждение браузера.
+Задним числом — да; будущие даты — нет (как в §17.2).
+- ✅ Q4 Негативная привычка: отметка = «это случилось» (сорвался). Триггер тогда естественно = «что спровоцировало».
+  Цвета: positive отмечена — зелёная клетка; negative отмечена — красная; прошедший день без отметки у negative — бледно-зелёный («удержался»),
+  у positive — пусто. Будущее — пусто.
+- ✅ Q5 максимум одна отметка на привычку в день (`PRIMARY KEY (habit_id, day)`); если бегал дважды — суммируешь количество в одной отметке.
+- ✅ Q13 при `trackAmount` количество **обязательно** для отметки; оценка и триггер — необязательны. Поле, которое у привычки выключено, → 400 `field_not_enabled`.
+
+**Календарь** (`#/habits/calendar[/<понедельник> | /<YYYY-MM>]`, неделя / месяц): строки — привычки (архивные — если есть отметки в окне), колонки — дни,
+клетка — цвет по правилам Q4 (`lib/habits.cellState`), tooltip — значения; на неделе значения видны в клетке. Клик по дню в шапке → «Отметки» этого дня.
+Цели — тонкая полоса над строкой привычки (на неделе с подписью: текст или прогресс), общие цели — отдельные строки сверху.
+
+**Цели на период:** `{habitId | null, title, from, to}` — «с 1 по 9 ноября бегать». Только напоминание: прогресс показываем
+(«4 из 9 дн.»; у негативной — «без срыва 4 из 9 дн.»: done = дни без отметки), провалом не считаем. Даты — до 366 дней.
+Страница «Цели»: «Сейчас и впереди» (будущие — пунктиром) и «Прошедшие», прогресс-бар цветом привычки. ✅ Q6 привязка к привычке необязательна — можно свободным текстом (тогда title обязателен).
+
+**Наблюдения и выводы:** лента, новые сверху, тип `observation` | `insight`, привязка к привычке или общая, дата — автоматически (момент создания из clock),
+текст — простой (§17.6, ≤ 20 000). Фильтр по привычке (все / общие / конкретная) и типу, подгрузка по 20 (курсор `before=<id>`). Править (прямо в ленте) и удалять можно.
+Вывод визуально выделен (зелёная полоса слева).
+
+### 17.5 Статистика новых разделов
+
+- День → Статистика (`#/day/stats`): последние 7 / 30 дней (`Segmented`, выбор запоминается в localStorage), плитки — дней с записями,
+  средняя оценка, средний дофамин, лучший день (`lib/journal.bestDay`: макс. оценка → больше дофамина → свежее; ссылка на день),
+  график (`DayChart`: столбики дофамина на фиксированной шкале 0..7 — `chart.bars(…, scaleMax)`, линия оценки 1..10), выполнение привычек.
+  Это и есть «общая статистика жизни» (отдельного раздела нет, Q7).
+- Привычки за период (`habits.Count` → `PeriodStat`, `GET /api/habits/stats`): учитываемые дни — с max(from, дата создания) по min(to, сегодня)
+  (у новой привычки нет «1 из 30»); positive — «отмечено N из M дн.»; negative — число срывов, доля чистых дней и лучшая серия без срыва;
+  сумма количества и средняя оценка, если есть. Архивные — только с отметками в окне.
+- Считается на лету из БД, без событий. ✅ Q14 Ачивки для новых разделов — не сейчас; новые события в `eventbus` не добавляем, пока нет подписчика.
+
+### 17.6 Длинные тексты (без Markdown — решено 2026-11-03)
+
+Markdown и формулы **не поддерживаем**: владельцу не нужны, а это +3 зависимости (`marked`, `dompurify`, `katex`) и санитизация.
+Рассказ о дне, выводы недели, наблюдения — **простой текст**: `textarea` (авторост высоты), при показе переносы строк сохраняются
+(`white-space: pre-wrap`), HTML не интерпретируется (Svelte экранирует `{text}`). Новых зависимостей нет.
+Если понадобится — можно добавить маленький свой рендер подмножества (заголовки, **жирный**, *курсив*, списки) с экранированием
+сначала, без библиотек.
+
+### 17.7 БД (миграции `0002_journal.sql` ✅, `0003_habits.sql` ✅, `0004_week_reviews.sql` ✅)
+
+Дни — `DATE` (дата в TZ пользователя). В Go — `time.Time` в 00:00 **UTC** («гражданская дата»), создаётся только через новые хелперы
+`clock.DateOf(t)` (дата t в её зоне), `clock.TodayDate(c)` и `clock.ParseDate("YYYY-MM-DD")`, обратно — `clock.FormatDate`; в API — строка `YYYY-MM-DD`.
+sqlc: глобальный override `date → time.Time` (`*time.Time` для NULL).
+Так дата не «съезжает» на день при конвертации таймзон.
+
+```sql
+-- 0002_journal.sql
+days              (day DATE PK, rating SMALLINT NULL CHECK 1..10, story TEXT NOT NULL DEFAULT '', created_at, updated_at)
+day_wins          (id, day → days ON DELETE CASCADE, position SMALLINT, text TEXT CHECK <> '', UNIQUE (day, position))
+dopamine_slots    (day → days ON DELETE CASCADE, slot SMALLINT CHECK 0..6, text TEXT CHECK (text <> '' AND char_length(text) <= 140),
+                   updated_at, PRIMARY KEY (day, slot))          -- пустой квадратик = нет строки
+-- 0004_week_reviews.sql ✅ (фаза 4 — вместе с API: в схеме не держим неиспользуемых таблиц)
+week_reviews      (week_start DATE PK CHECK (extract(isodow FROM week_start) = 1), created_at, updated_at)
+week_review_blocks(id, week_start → week_reviews ON DELETE CASCADE, position SMALLINT, topic TEXT CHECK ≤ 200, conclusion TEXT CHECK ≤ 20000,
+                   CHECK (topic <> '' OR conclusion <> ''), UNIQUE (week_start, position))
+
+-- 0003_habits.sql
+habits            (id, name TEXT CHECK 1..60, kind TEXT CHECK IN ('positive','negative'), color TEXT NULL CHECK ~ '^#[0-9a-f]{6}$',
+                   track_trigger BOOL, track_rating BOOL, track_amount BOOL, unit TEXT NOT NULL DEFAULT '' CHECK ≤ 20,
+                   position INT, archived_at TIMESTAMPTZ NULL, created_at)   UNIQUE INDEX (lower(name))
+habit_checkins    (habit_id → habits ON DELETE CASCADE, day DATE, trigger TEXT NULL, rating SMALLINT NULL CHECK 1..10,
+                   amount DOUBLE PRECISION NULL CHECK >= 0, created_at, updated_at, PRIMARY KEY (habit_id, day))
+                  INDEX (day)                                    -- «все отметки за период»
+habit_goals       (id, habit_id → habits ON DELETE CASCADE NULL, title TEXT NOT NULL DEFAULT '', start_day DATE, end_day DATE,
+                   created_at, CHECK (end_day >= start_day), CHECK (habit_id IS NOT NULL OR title <> ''))
+                  INDEX (end_day, start_day)                     -- «пересекает окно»: end >= from AND start <= to
+habit_notes       (id, habit_id → habits ON DELETE SET NULL NULL, kind TEXT CHECK IN ('observation','insight'),
+                   body TEXT CHECK 1..20000, created_at, updated_at)  INDEX (habit_id, id); лента — ORDER BY id DESC (порядок создания)
+```
+- `amount` — `DOUBLE PRECISION`, а не `NUMERIC`: pgx отдаёт NUMERIC как `pgtype.Numeric`, неудобно; точность float64 для «5.2 км» с запасом, фронт округляет до 2 знаков.
+- Заметка общая после удаления привычки (`SET NULL`), цели привычки удаляются вместе с ней (`CASCADE`).
+
+### 17.8 API
+
+```
+# journal
+GET    /api/journal/days/{day}             → Day = {day, rating|null, story, wins: string[], dopamine: [7 × string|null], dopamineLevel}
+                                           (дня без записи нет — отдаётся пустой, не 404; читать будущее можно, писать — нет)
+PATCH  /api/journal/days/{day}             {rating?: 1..10|null, story?, wins?: string[]} → Day   (нет поля — не менять; wins заменяют список целиком)
+PUT    /api/journal/days/{day}/dopamine/{slot}   {text} → Day       (slot 0..6; text trim, ≤ 140 символов; пустой = погасить)
+GET    /api/journal/days?from=&to=         → {from, to, days: [{day, rating|null, dopamineLevel, wins, hasStory}]}
+                                           (включительно; по умолчанию 30 последних дней; все дни окна, будущие тоже; ≤ 366)
+GET    /api/journal/weeks/{monday}         → Week = {weekStart, weekEnd, blocks: [{topic, conclusion}], updatedAt|null, summary: WeekSummary}
+                                           (недели без анализа нет — пустые blocks, updatedAt: null)
+PUT    /api/journal/weeks/{monday}         {blocks: [...]} → Week   ([] — удалить анализ; будущая неделя — future_day)
+       WeekSummary = {days: DaySummary[7], filled, avgRating|null, avgDopamine|null, habits: HabitStat[], goals: Goal[]}
+       400 invalid_date | invalid_range | future_day | invalid_rating | invalid_slot | text_too_long | too_many_items | invalid_json
+           (+ not_monday для недель)
+
+# habits
+GET    /api/habits?archived=true           → {habits: Habit[]}   (по position)
+       Habit = {id, name, kind, color, trackTrigger, trackRating, trackAmount, unit, archived, startDay, createdAt}
+                                           (без ?archived=true — только активные)
+POST   /api/habits                         {name, kind, color?, trackTrigger, trackRating, trackAmount, unit?} → 201 Habit
+PATCH  /api/habits/{id}                    {name?, color?: "#rrggbb"|null, trackTrigger?, trackRating?, trackAmount?, unit?, archived?} → Habit
+                                           (kind не меняется — неизвестное поле → 400 invalid_json)
+DELETE /api/habits/{id}                    → 204
+PUT    /api/habits/order                   {ids: [...]} → 204   (все id ровно по разу, иначе 400 invalid_order)
+GET    /api/habits/checkins?from=&to=      → {from, to, checkins: [{habitId, day, trigger|null, rating|null, amount|null}]}  (по умолчанию 30 дней)
+PUT    /api/habits/checkins/{day}          {checkins: [{habitId, done, trigger?, rating?, amount?}]} → {checkins: все отметки дня}
+                                           (одна транзакция; done=false удаляет; привычки не из списка не трогаются; повтор habitId → invalid_habit)
+GET    /api/habits/goals[?from=&to=]       → {goals: Goal[]}   (с окном — пересекающие его; без — все, новые сверху)
+       Goal = {id, habitId|null, title, from, to, progress: {done, elapsed, total} | null}
+POST   /api/habits/goals                   {habitId|null, title, from, to} → 201 Goal
+PUT    /api/habits/goals/{id}              то же → Goal   (заменяет целиком)      DELETE /api/habits/goals/{id} → 204
+GET    /api/habits/notes?habit=<id>|general&kind=observation|insight&before=<id>&limit=1..100 (20)
+                                           → {notes: [{id, habitId|null, kind, body, createdAt, updatedAt}], next: id|null}
+POST   /api/habits/notes                   {habitId|null, kind, body} → 201 Note
+PUT    /api/habits/notes/{id}              то же → Note   (заменяет целиком)      DELETE /api/habits/notes/{id} → 204
+       400 invalid_id | invalid_habit_name | invalid_kind | invalid_color | invalid_unit | invalid_habit | invalid_order
+           | field_not_enabled | amount_required | invalid_rating | invalid_amount | text_too_long | empty_text | title_required
+           | invalid_date | invalid_range | future_day | invalid_cursor | invalid_limit; 404; 409 duplicate_habit
+```
+Сводке недели нужны данные привычек: `journal` получает их через узкий интерфейс `journal.HabitSource{PeriodStats, Goals}`
+(реализует `*habits.Service`, `journal` импортирует `habits` только ради типов) — как `groups.WordLister`. В `router.go` — отдельный экземпляр `habits.NewService`.
+```
+GET    /api/habits/stats?from=&to=         → {from, to, habits: HabitStat[]}   (по умолчанию 30 дней)
+       HabitStat = {habitId, name, kind, color, unit, trackAmount, trackRating, archived,
+                    days, checked, amount|null, avgRating|null, bestClean}
+```
+
+### 17.9 Структура кода
+
+```
+backend/internal/journal/   module.go (хендлеры) journal.go (типы, валидация) calc.go (FillDays) service.go store/   queries/journal.sql
+backend/internal/habits/    module.go (хендлеры) habits.go (типы, Fields/Patch/ValidateCheckin/NoteInput) rules.go (цели, CheckOrder) service.go store/
+backend/internal/platform/days/   Parse, ParseRange, CheckWritable — даты из запроса (общие для journal и habits)
+backend/internal/platform/clock/  + date.go: DateOf, TodayDate, ParseDate, FormatDate
+backend/internal/journal/week.go  недельный анализ: HabitSource, NormalizeBlocks, Averages, Week/SaveWeek
+backend/internal/habits/stats.go  Count (чистая) → PeriodStat, PeriodStats, Stats
+backend/internal/platform/httpx/  + Optional[T] — PATCH-поле «нет / null / значение» (обобщение groups.OptionalString)
+frontend/src/lib/state/route.ts   section/page/rest + редиректы старых хэшей
+frontend/src/sections/nav.ts      карта навигации (раздел → подразделы → компоненты)
+frontend/src/sections/english/    ← нынешние tabs/* (переезд без изменений поведения)
+frontend/src/sections/day/        Entry/{Entry,DopamineScale,WinsList,Story,HabitsBlock}, Calendar/, Week/, Stats/, DayChart, HabitStats
+frontend/src/lib/components/      + DatePager, RatingPicker, ColorPicker (общие для разделов)
+frontend/src/lib/journal.ts       ratingTone, move, isFilled, summarize; lib/dates.ts + formatDay/today/addDays/isDay/monthGrid/…
+frontend/src/sections/habits/     HabitDialog, Check/{Check,CheckRow}, Calendar/, Goals/{Goals,GoalDialog}, Notes/{Notes,NoteEditor}, Manage/
+frontend/src/lib/habits.ts        cellState, weekStart, daysRange, goalSpans, parseAmount/formatAmount, draftOf/sameDraft/toInput
+frontend/src/sections/settings/   General, Data
+```
+Чистые функции с table-driven тестами: `journal.Patch.Normalize`, `NormalizeDopamine`, `FillDays`, `NormalizeBlocks`, `Averages`; `days.Parse/ParseRange/CheckWritable/WeekStart/ParseWeek`;
+`habits.Fields.Normalize`, `Patch.Apply`, `ValidateCheckin`, `GoalInput.Normalize`, `GoalProgress`, `NoteInput.Normalize`, `CheckOrder`
+`habits.Count` (выполнение за период: учитываемые дни, сумма, средняя оценка, лучшая чистая серия);
+фронт: `journal.bestDay`, `chart.bars(…, scaleMax)`;
+фронт: `parseHash`/редиректы, раскладка календаря привычек, полосы целей.
+
+### 17.10 Бэкап и очистка
+
+- Бэкап `version: 2` = v1 + `journal: {days: [{day, rating, story, wins: string[], dopamine: [{slot, text, updatedAt}], createdAt, updatedAt}]}` ✅
+  + `habits: {habits: [{id, name, kind, color, trackTrigger, trackRating, trackAmount, unit, position, archivedAt, createdAt}],
+  checkins: [{habitId, day, trigger, rating, amount, createdAt, updatedAt}], goals: [{habitId, title, from, to, createdAt}],
+  notes: [{habitId, kind, body, createdAt, updatedAt}]}` ✅ + `journal.weeks: [{weekStart, blocks: [{topic, conclusion}], createdAt, updatedAt}]` ✅ (в бэкапах до фазы 4 ключа нет — пусто).
+  Новые секции необязательные, версия остаётся 2.
+  Файлы `version: 1` восстанавливаются; v1 с секцией `journal`/`habits` — 400 `invalid_backup`. Ответ импорта — `restored.days`, `restored.habits`.
+- ✅ Q10 восстановление заменяет только те разделы, что есть в файле (v1-файл не сотрёт дневник и привычки); битая секция откатывает всё восстановление;
+  очистка — по разделам: «Очистить английский» (в его настройках, `scope: english`) и «Очистить всё» (⚙ → Данные, `scope: all`) ✅.
+- Бэкап новых данных делаем **в той же фазе, что и модуль** (а не в конце): иначе между фазами данные дня существуют без бэкапа.
+
+### 17.11 Уведомления
+
+✅ Q8 только внутри приложения (как решено в §9): точка на разделе «День» в шапке, если после 18:00 сегодня не оценён;
+счётчик неотмеченных привычек на «Привычках». Системных уведомлений нет.
+Реализовано: точка (янтарная) на «Дне» — после 18:00 по часам браузера, если сегодня нет оценки; число на «Привычках» — активные позитивные
+привычки без отметки сегодня (негативные не считаются: «нет отметки» = удержался). Обновляется при старте, переходах, фокусе вкладки,
+раз в 5 минут и после сохранения оценки / отметок. Ошибка сети — напоминания просто не показываются.
+
+### 17.12 Фазы
+
+1. ✅ (2026-11-03) Оболочка навигации: шапка разделов + сайдбар (`App.svelte`, токены `--sidebar-w`/`--sidebar-w-narrow`), `tabs/*` → `sections/english/*`,
+   хэш `#/section/page`, редиректы старых хэшей, i18n `tabs.*` → `nav.*`, подразделы «Дня»/«Привычек» — заглушка `Soon`. ⚙ перенесён в фазу 5
+   (до разделения настроек ему нечего показывать).
+2. ✅ (2026-11-03) День: миграция `0002`, `clock`-хелперы дат, `httpx.Optional`, модуль `journal` (без недель), страница дня, дофамин, календарь месяца, бэкап v2 с днями.
+   Интеграционные тесты: сервис (полночь МСК, `future_day`), HTTP, круговой бэкап с днями, v1-бэкап не трогает дневник, очистка английского — тоже.
+3. ✅ (2026-11-03) Привычки: `0003`, модуль `habits` (CRUD, отметки, цели с прогрессом, лента наблюдений), `platform/days` (вынесено из journal),
+   бэкап — секция `habits`; фронт — «Отметки», «Календарь» (неделя/месяц + цели), «Цели», «Наблюдения», «Мои привычки», блок привычек на странице дня.
+   Интеграционные тесты: цикл привычки, отметки задним числом и атомарность формы, цели (прогресс positive/negative), лента с курсором и фильтрами,
+   удаление привычки (каскад / заметки становятся общими), круговой бэкап с привычками, v1-бэкап и очистка английского их не трогают.
+4. ✅ (2026-11-05) Неделя + статистика: `0004_week_reviews`, `days.WeekStart/ParseWeek`, недельный анализ со сводкой (`journal.HabitSource`),
+   `habits.Count` + `GET /api/habits/stats`, страницы «Неделя» и «Статистика» (`DayChart`, `HabitStats`), бэкап `journal.weeks`; заглушка `Soon` удалена.
+   Интеграционные тесты: неделя — пустая/сохранить/переставить/очистить, сводка с реальными привычками и целями, прошлая/будущая неделя; круговой бэкап с неделями.
+5. ✅ (2026-11-05) Полировка: ⚙ в шапке (раздел `settings`, `header: false` в `nav.ts`) + разделение настроек, `POST /api/data/reset {scope}`,
+   напоминания в шапке (`lib/reminders.ts` + `state/reminders.svelte.ts`), вычитка i18n (удалены осиротевшие ключи), README.
+   Роутинг: «#settings» (v1, без слэша) — по-прежнему настройки английского, «#/settings» — ⚙ (новый формат всегда со слэшем).
+
+Все фазы v2 закрыты (2026-11-05).

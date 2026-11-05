@@ -126,11 +126,17 @@ func TestRouter_EndToEnd(t *testing.T) {
 	if code := call(http.MethodGet, "/api/settings", "", &settings); code != 200 || settings.Language != "ru" {
 		t.Errorf("settings: %d %+v", code, settings)
 	}
+	// Раздел «День» смонтирован и попадает в бэкап.
+	var day struct{ DopamineLevel int }
+	if code := call(http.MethodPut, "/api/journal/days/2026-11-02/dopamine/0", `{"text":"кофе"}`, &day); code != 200 || day.DopamineLevel != 1 {
+		t.Errorf("journal: %d %+v", code, day)
+	}
 	var backup struct {
 		Version int
 		Words   []any
+		Journal struct{ Days []any }
 	}
-	if code := call(http.MethodGet, "/api/data/export", "", &backup); code != 200 || backup.Version != 1 || len(backup.Words) != 2 {
+	if code := call(http.MethodGet, "/api/data/export", "", &backup); code != 200 || backup.Version != 2 || len(backup.Words) != 2 || len(backup.Journal.Days) != 1 {
 		t.Errorf("export: %d %+v", code, backup)
 	}
 }

@@ -43,6 +43,99 @@ func (q *Queries) ListAllAchievements(ctx context.Context) ([]Achievement, error
 	return items, nil
 }
 
+const listAllCheckins = `-- name: ListAllCheckins :many
+SELECT habit_id, day, trigger, rating, amount, created_at, updated_at FROM habit_checkins ORDER BY day, habit_id
+`
+
+func (q *Queries) ListAllCheckins(ctx context.Context) ([]HabitCheckin, error) {
+	rows, err := q.db.Query(ctx, listAllCheckins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HabitCheckin
+	for rows.Next() {
+		var i HabitCheckin
+		if err := rows.Scan(
+			&i.HabitID,
+			&i.Day,
+			&i.Trigger,
+			&i.Rating,
+			&i.Amount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllDays = `-- name: ListAllDays :many
+
+SELECT day, rating, story, created_at, updated_at FROM days ORDER BY day
+`
+
+// Раздел «День» (§17.10): в бэкапе v2 — секция journal.
+func (q *Queries) ListAllDays(ctx context.Context) ([]Day, error) {
+	rows, err := q.db.Query(ctx, listAllDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Day
+	for rows.Next() {
+		var i Day
+		if err := rows.Scan(
+			&i.Day,
+			&i.Rating,
+			&i.Story,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllDopamine = `-- name: ListAllDopamine :many
+SELECT day, slot, text, updated_at FROM dopamine_slots ORDER BY day, slot
+`
+
+func (q *Queries) ListAllDopamine(ctx context.Context) ([]DopamineSlot, error) {
+	rows, err := q.db.Query(ctx, listAllDopamine)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DopamineSlot
+	for rows.Next() {
+		var i DopamineSlot
+		if err := rows.Scan(
+			&i.Day,
+			&i.Slot,
+			&i.Text,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllExamples = `-- name: ListAllExamples :many
 SELECT word_id, sentence FROM word_examples ORDER BY word_id, position
 `
@@ -91,6 +184,106 @@ func (q *Queries) ListAllGroups(ctx context.Context) ([]Group, error) {
 			&i.ID,
 			&i.Name,
 			&i.Color,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllHabitGoals = `-- name: ListAllHabitGoals :many
+SELECT id, habit_id, title, start_day, end_day, created_at FROM habit_goals ORDER BY id
+`
+
+func (q *Queries) ListAllHabitGoals(ctx context.Context) ([]HabitGoal, error) {
+	rows, err := q.db.Query(ctx, listAllHabitGoals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HabitGoal
+	for rows.Next() {
+		var i HabitGoal
+		if err := rows.Scan(
+			&i.ID,
+			&i.HabitID,
+			&i.Title,
+			&i.StartDay,
+			&i.EndDay,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllHabitNotes = `-- name: ListAllHabitNotes :many
+SELECT id, habit_id, kind, body, created_at, updated_at FROM habit_notes ORDER BY id
+`
+
+func (q *Queries) ListAllHabitNotes(ctx context.Context) ([]HabitNote, error) {
+	rows, err := q.db.Query(ctx, listAllHabitNotes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HabitNote
+	for rows.Next() {
+		var i HabitNote
+		if err := rows.Scan(
+			&i.ID,
+			&i.HabitID,
+			&i.Kind,
+			&i.Body,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllHabits = `-- name: ListAllHabits :many
+
+SELECT id, name, kind, color, track_trigger, track_rating, track_amount, unit, position, archived_at, created_at FROM habits ORDER BY id
+`
+
+// Раздел «Привычки» (§17.10): в бэкапе v2 — секция habits.
+func (q *Queries) ListAllHabits(ctx context.Context) ([]Habit, error) {
+	rows, err := q.db.Query(ctx, listAllHabits)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Habit
+	for rows.Next() {
+		var i Habit
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Kind,
+			&i.Color,
+			&i.TrackTrigger,
+			&i.TrackRating,
+			&i.TrackAmount,
+			&i.Unit,
+			&i.Position,
+			&i.ArchivedAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -196,6 +389,91 @@ func (q *Queries) ListAllSettings(ctx context.Context) ([]Setting, error) {
 	return items, nil
 }
 
+const listAllWeekBlocks = `-- name: ListAllWeekBlocks :many
+SELECT week_start, topic, conclusion FROM week_review_blocks ORDER BY week_start, position
+`
+
+type ListAllWeekBlocksRow struct {
+	WeekStart  time.Time
+	Topic      string
+	Conclusion string
+}
+
+func (q *Queries) ListAllWeekBlocks(ctx context.Context) ([]ListAllWeekBlocksRow, error) {
+	rows, err := q.db.Query(ctx, listAllWeekBlocks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllWeekBlocksRow
+	for rows.Next() {
+		var i ListAllWeekBlocksRow
+		if err := rows.Scan(&i.WeekStart, &i.Topic, &i.Conclusion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllWeeks = `-- name: ListAllWeeks :many
+
+SELECT week_start, created_at, updated_at FROM week_reviews ORDER BY week_start
+`
+
+// Недельный анализ: в бэкапе v2 — journal.weeks.
+func (q *Queries) ListAllWeeks(ctx context.Context) ([]WeekReview, error) {
+	rows, err := q.db.Query(ctx, listAllWeeks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WeekReview
+	for rows.Next() {
+		var i WeekReview
+		if err := rows.Scan(&i.WeekStart, &i.CreatedAt, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllWins = `-- name: ListAllWins :many
+SELECT day, text FROM day_wins ORDER BY day, position
+`
+
+type ListAllWinsRow struct {
+	Day  time.Time
+	Text string
+}
+
+func (q *Queries) ListAllWins(ctx context.Context) ([]ListAllWinsRow, error) {
+	rows, err := q.db.Query(ctx, listAllWins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllWinsRow
+	for rows.Next() {
+		var i ListAllWinsRow
+		if err := rows.Scan(&i.Day, &i.Text); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllWordGroups = `-- name: ListAllWordGroups :many
 SELECT word_id, group_id FROM word_groups ORDER BY word_id, group_id
 `
@@ -269,6 +547,31 @@ func (q *Queries) RestoreAchievement(ctx context.Context, arg RestoreAchievement
 	return err
 }
 
+type RestoreCheckinsParams struct {
+	HabitID   int64
+	Day       time.Time
+	Trigger   *string
+	Rating    *int16
+	Amount    *float64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RestoreDaysParams struct {
+	Day       time.Time
+	Rating    *int16
+	Story     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RestoreDopamineParams struct {
+	Day       time.Time
+	Slot      int16
+	Text      string
+	UpdatedAt time.Time
+}
+
 type RestoreExamplesParams struct {
 	WordID   int64
 	Position int16
@@ -291,6 +594,59 @@ func (q *Queries) RestoreGroup(ctx context.Context, arg RestoreGroupParams) (int
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const restoreHabit = `-- name: RestoreHabit :one
+INSERT INTO habits (name, kind, color, track_trigger, track_rating, track_amount, unit, position, archived_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id
+`
+
+type RestoreHabitParams struct {
+	Name         string
+	Kind         string
+	Color        *string
+	TrackTrigger bool
+	TrackRating  bool
+	TrackAmount  bool
+	Unit         string
+	Position     int32
+	ArchivedAt   *time.Time
+	CreatedAt    time.Time
+}
+
+func (q *Queries) RestoreHabit(ctx context.Context, arg RestoreHabitParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreHabit,
+		arg.Name,
+		arg.Kind,
+		arg.Color,
+		arg.TrackTrigger,
+		arg.TrackRating,
+		arg.TrackAmount,
+		arg.Unit,
+		arg.Position,
+		arg.ArchivedAt,
+		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+type RestoreHabitGoalsParams struct {
+	HabitID   *int64
+	Title     string
+	StartDay  time.Time
+	EndDay    time.Time
+	CreatedAt time.Time
+}
+
+type RestoreHabitNotesParams struct {
+	HabitID   *int64
+	Kind      string
+	Body      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type RestoreReviewsParams struct {
@@ -354,6 +710,25 @@ func (q *Queries) RestoreSetting(ctx context.Context, arg RestoreSettingParams) 
 	return err
 }
 
+type RestoreWeekBlocksParams struct {
+	WeekStart  time.Time
+	Position   int16
+	Topic      string
+	Conclusion string
+}
+
+type RestoreWeeksParams struct {
+	WeekStart time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RestoreWinsParams struct {
+	Day      time.Time
+	Position int16
+	Text     string
+}
+
 const restoreWord = `-- name: RestoreWord :one
 INSERT INTO words (term, forms, translation, level, streak, next_review_at, last_reviewed_at, last_good_at, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -401,5 +776,25 @@ TRUNCATE words, word_examples, groups, word_groups, training_sessions, reviews, 
 // Всё, кроме settings (§12: очистка базы сохраняет язык и лимит). RESTART IDENTITY — id снова с 1.
 func (q *Queries) TruncateData(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, truncateData)
+	return err
+}
+
+const truncateHabits = `-- name: TruncateHabits :exec
+TRUNCATE habits, habit_checkins, habit_goals, habit_notes RESTART IDENTITY
+`
+
+// Только если в файле есть секция habits (§17.10).
+func (q *Queries) TruncateHabits(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, truncateHabits)
+	return err
+}
+
+const truncateJournal = `-- name: TruncateJournal :exec
+TRUNCATE days, day_wins, dopamine_slots, week_reviews, week_review_blocks RESTART IDENTITY
+`
+
+// Только если в файле есть секция journal: старый бэкап (v1) дневник не трогает (§17.10).
+func (q *Queries) TruncateJournal(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, truncateJournal)
 	return err
 }

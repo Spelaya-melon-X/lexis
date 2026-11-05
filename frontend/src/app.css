@@ -60,6 +60,8 @@
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   --header-h: 64px;
+  --sidebar-w: 200px;
+  --sidebar-w-narrow: 56px;
   --content-w: 1120px;
 
   color-scheme: light;

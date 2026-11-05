@@ -122,6 +122,31 @@ func seed(t *testing.T, ws *words.Service, fx dbtest.Fixtures) {
 	if _, err := ws.Bulk(ctx, "go_went_gone || идти || I [go] <> I [went] || verbs"); err != nil {
 		t.Fatalf("Bulk: %v", err)
 	}
+
+	// Раздел «День»: день со всем, день только с дофамином, пустой день (строка есть, данных нет).
+	fx.Exec(t, `INSERT INTO days (day, rating, story, created_at, updated_at) VALUES
+		('2026-11-01', 8, 'история', $1, $1), ('2026-11-02', NULL, '', $1, $1), ('2026-10-01', NULL, '', $1, $1)`, fin)
+	fx.Exec(t, `INSERT INTO day_wins (day, position, text) VALUES ('2026-11-01', 0, 'бег'), ('2026-11-01', 1, 'книга')`)
+	fx.Exec(t, `INSERT INTO week_reviews (week_start, created_at, updated_at) VALUES ('2026-10-26', $1, $1)`, fin)
+	fx.Exec(t, `INSERT INTO week_review_blocks (week_start, position, topic, conclusion) VALUES
+		('2026-10-26', 0, 'Сон', 'ложиться раньше'), ('2026-10-26', 1, '', 'только вывод')`)
+	fx.Exec(t, `INSERT INTO dopamine_slots (day, slot, text, updated_at) VALUES
+		('2026-11-01', 0, 'кофе', $1), ('2026-11-01', 5, 'музыка', $1), ('2026-11-02', 6, 'солнце', $1)`, fin)
+
+	// Привычки: дыра в id (удалённая привычка), архивная, общая заметка, цель без привычки.
+	fx.Exec(t, `INSERT INTO habits (name, kind, color, track_amount, unit, position, created_at) VALUES
+		('удалённая', 'positive', NULL, false, '', 9, $1),
+		('Бег', 'positive', '#16a34a', true, 'км', 0, $1)`, fin)
+	fx.Exec(t, `DELETE FROM habits WHERE name = 'удалённая'`)
+	fx.Exec(t, `INSERT INTO habits (name, kind, track_trigger, position, archived_at, created_at) VALUES ('Курение', 'negative', true, 1, $1, $1)`, fin)
+	run := fx.Int(t, `SELECT id FROM habits WHERE name = 'Бег'`)
+	smoke := fx.Int(t, `SELECT id FROM habits WHERE name = 'Курение'`)
+	fx.Exec(t, `INSERT INTO habit_checkins (habit_id, day, trigger, rating, amount, created_at, updated_at) VALUES
+		($1, '2026-11-01', NULL, NULL, 5.5, $3, $3), ($2, '2026-11-01', 'стресс', NULL, NULL, $3, $3)`, run, smoke, fin)
+	fx.Exec(t, `INSERT INTO habit_goals (habit_id, title, start_day, end_day, created_at) VALUES
+		($1, '', '2026-11-01', '2026-11-09', $2), (NULL, 'Спать до 23', '2026-12-01', '2026-12-07', $2)`, run, fin)
+	fx.Exec(t, `INSERT INTO habit_notes (habit_id, kind, body, created_at, updated_at) VALUES
+		($1, 'observation', 'первая', $2, $2), (NULL, 'insight', 'вторая', $2, $2)`, run, fin)
 }
 
 // canonical заменяет id порядковыми номерами (ссылки — тоже), чтобы сравнивать снимки
@@ -139,6 +164,29 @@ func canonical(t *testing.T, b Backup) string {
 		b.Words[i].ID = int64(i)
 		for j, g := range b.Words[i].GroupIDs {
 			b.Words[i].GroupIDs[j] = gIdx[g]
+		}
+	}
+	if b.Habits != nil {
+		hIdx := map[int64]int64{}
+		for i := range b.Habits.Habits {
+			hIdx[b.Habits.Habits[i].ID] = int64(i)
+			b.Habits.Habits[i].ID = int64(i)
+		}
+		remap := func(id *int64) *int64 {
+			if id == nil {
+				return nil
+			}
+			v := hIdx[*id]
+			return &v
+		}
+		for i := range b.Habits.Checkins {
+			b.Habits.Checkins[i].HabitID = hIdx[b.Habits.Checkins[i].HabitID]
+		}
+		for i := range b.Habits.Goals {
+			b.Habits.Goals[i].HabitID = remap(b.Habits.Goals[i].HabitID)
+		}
+		for i := range b.Habits.Notes {
+			b.Habits.Notes[i].HabitID = remap(b.Habits.Notes[i].HabitID)
 		}
 	}
 	for i := range b.Sessions {
@@ -167,6 +215,18 @@ func TestBackup_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportBackup: %v", err)
 	}
+	if b1.Version != BackupVersion || b1.Journal == nil || len(b1.Journal.Days) != 3 {
+		t.Fatalf("journal section = %+v", b1.Journal)
+	}
+	if w := b1.Journal.Weeks; len(w) != 1 || len(w[0].Blocks) != 2 || w[0].Blocks[1].Conclusion != "только вывод" {
+		t.Fatalf("journal weeks = %+v", w)
+	}
+	if d := b1.Journal.Days[1]; d.Day != "2026-11-01" || *d.Rating != 8 || !reflect.DeepEqual(d.Wins, []string{"бег", "книга"}) || len(d.Dopamine) != 2 {
+		t.Fatalf("journal day = %+v", d)
+	}
+	if h := b1.Habits; h == nil || len(h.Habits) != 2 || len(h.Checkins) != 2 || len(h.Goals) != 2 || len(h.Notes) != 2 || h.Habits[1].ArchivedAt == nil {
+		t.Fatalf("habits section = %+v", b1.Habits)
+	}
 	if len(b1.Words) != 3 || len(b1.Groups) != 3 || len(b1.Sessions) != 2 || len(b1.Achievements) != 1 || len(b1.Settings) != 2 {
 		t.Fatalf("snapshot = %d words %d groups %d sessions %d ach %d settings",
 			len(b1.Words), len(b1.Groups), len(b1.Sessions), len(b1.Achievements), len(b1.Settings))
@@ -177,9 +237,14 @@ func TestBackup_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx.Exec(t, `UPDATE settings SET value = '"ru"' WHERE key = 'language'`)
+	fx.Exec(t, `DELETE FROM dopamine_slots WHERE slot = 0`)
+	fx.Exec(t, `INSERT INTO days (day, created_at, updated_at) VALUES ('2026-09-01', $1, $1)`, testDay)
+	fx.Exec(t, `DELETE FROM habit_notes`)
+	fx.Exec(t, `DELETE FROM week_reviews`)
+	fx.Exec(t, `INSERT INTO habits (name, kind, position, created_at) VALUES ('лишняя', 'positive', 5, $1)`, testDay)
 	raw, _ := json.Marshal(b1)
 	res := mustImport(t, svc, string(raw))
-	if res.Kind != "backup" || res.Restored == nil || *res.Restored != (RestoreCounts{Groups: 3, Words: 3, Sessions: 2, Reviews: 3, Achievements: 1}) {
+	if res.Kind != "backup" || res.Restored == nil || *res.Restored != (RestoreCounts{Groups: 3, Words: 3, Sessions: 2, Reviews: 3, Achievements: 1, Days: 3, Habits: 2}) {
 		t.Fatalf("restore result = %+v", res)
 	}
 
@@ -193,6 +258,57 @@ func TestBackup_RoundTrip(t *testing.T) {
 	// После восстановления обычная работа продолжается: новые id не конфликтуют.
 	if _, err := ws.Bulk(ctx, "new || новое || || food"); err != nil {
 		t.Errorf("Bulk after restore: %v", err)
+	}
+}
+
+// Бэкап v1 (до раздела «День») восстанавливает английский и не трогает дневник (§17.10).
+func TestRestore_V1KeepsJournal(t *testing.T) {
+	svc, ws, fx := newTestEnv(t)
+	ctx := context.Background()
+	seed(t, ws, fx)
+	b, err := svc.ExportBackup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Version, b.Journal, b.Habits = 1, nil, nil
+	b.Words = b.Words[:1]
+	b.Sessions = nil
+
+	raw, _ := json.Marshal(b)
+	res := mustImport(t, svc, string(raw))
+	if res.Restored == nil || res.Restored.Words != 1 || res.Restored.Days != 0 {
+		t.Fatalf("restored = %+v", res.Restored)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM words`); n != 1 {
+		t.Errorf("words = %d, want 1", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM days`) + fx.Int(t, `SELECT count(*) FROM day_wins`) + fx.Int(t, `SELECT count(*) FROM dopamine_slots`); n != 3+2+3 {
+		t.Errorf("journal must survive v1 restore, rows = %d", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM habits`) + fx.Int(t, `SELECT count(*) FROM habit_checkins`) + fx.Int(t, `SELECT count(*) FROM habit_notes`); n != 2+2+2 {
+		t.Errorf("habits must survive v1 restore, rows = %d", n)
+	}
+}
+
+// Битая секция journal откатывает всё восстановление, английский в том числе.
+func TestRestore_InvalidJournalRollsBack(t *testing.T) {
+	svc, ws, fx := newTestEnv(t)
+	ctx := context.Background()
+	seed(t, ws, fx)
+	b, err := svc.ExportBackup(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Words[0].Term = "changed"
+	b.Journal.Days[0].Dopamine = []BackupDopamine{{Slot: 9, Text: "x"}} // CHECK slot 0..6
+
+	_, err = svc.Restore(ctx, b)
+	assertCode(t, err, "invalid_backup")
+	if n := fx.Int(t, `SELECT count(*) FROM words WHERE term = 'changed'`); n != 0 {
+		t.Errorf("words must be untouched")
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM dopamine_slots`); n != 3 {
+		t.Errorf("journal must be untouched, dopamine rows = %d", n)
 	}
 }
 
@@ -219,10 +335,28 @@ func TestRestore_InvalidRollsBack(t *testing.T) {
 	}
 }
 
+// «Очистить всё»: английский + дневник + привычки, настройки остаются.
+func TestReset_All(t *testing.T) {
+	svc, ws, fx := newTestEnv(t)
+	seed(t, ws, fx)
+	if err := svc.Reset(context.Background(), ScopeAll); err != nil {
+		t.Fatalf("Reset all: %v", err)
+	}
+	for _, table := range []string{"words", "groups", "training_sessions", "achievements", "days", "day_wins", "dopamine_slots",
+		"week_reviews", "week_review_blocks", "habits", "habit_checkins", "habit_goals", "habit_notes"} {
+		if n := fx.Int(t, `SELECT count(*) FROM `+table); n != 0 {
+			t.Errorf("%s not empty: %d", table, n)
+		}
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM settings`); n != 2 {
+		t.Errorf("settings must survive, got %d", n)
+	}
+}
+
 func TestReset(t *testing.T) {
 	svc, ws, fx := newTestEnv(t)
 	seed(t, ws, fx)
-	if err := svc.Reset(context.Background()); err != nil {
+	if err := svc.Reset(context.Background(), ScopeEnglish); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
 	for _, table := range []string{"words", "word_examples", "groups", "word_groups", "training_sessions", "reviews", "achievements"} {
@@ -232,6 +366,12 @@ func TestReset(t *testing.T) {
 	}
 	if n := fx.Int(t, `SELECT count(*) FROM settings`); n != 2 {
 		t.Errorf("settings must survive reset, got %d", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM days`); n != 3 {
+		t.Errorf("reset of English must keep journal, days = %d", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM habits`); n != 2 {
+		t.Errorf("reset of English must keep habits, got %d", n)
 	}
 	if id := fx.Group(t, "fresh"); id != 1 {
 		t.Errorf("ids must restart, got %d", id)

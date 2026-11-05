@@ -22,6 +22,14 @@
     chevronRight: 'M9 5l7 7-7 7',
     alert: 'M12 3l10 18H2z M12 10v5 M12 18v.01',
     clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7v5l3 3',
+    book: 'M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4z M20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z',
+    sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4',
+    calendar: 'M4 5h16v15H4z M4 10h16 M8 3v4 M16 3v4',
+    week: 'M4 5h16v15H4z M4 10h16 M8 3v4 M16 3v4 M8 14h8',
+    target: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 12v.01',
+    note: 'M5 3h10l4 4v14H5z M15 3v4h4 M9 12h6 M9 16h6',
+    list: 'M9 6h11 M9 12h11 M9 18h11 M4 6v.01 M4 12v.01 M4 18v.01',
+    repeat: 'M17 2l4 4-4 4 M3 12V10a4 4 0 0 1 4-4h14 M7 22l-4-4 4-4 M21 12v2a4 4 0 0 1-4 4H3',
   } as const
 
   export type IconName = keyof typeof paths
