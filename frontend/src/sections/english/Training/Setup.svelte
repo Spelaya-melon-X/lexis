@@ -6,6 +6,7 @@
   import Card from '../../../lib/components/Card.svelte'
   import Icon from '../../../lib/components/Icon.svelte'
   import Spinner from '../../../lib/components/Spinner.svelte'
+  import { pathTo, visibleRows } from '../../../lib/groupTree'
   import { errorText, t } from '../../../lib/i18n/i18n.svelte'
   import { route } from '../../../lib/state/route.svelte'
   import { session } from '../../../lib/state/session.svelte'
@@ -26,6 +27,9 @@
   let nothingDue = $state(false)
 
   const selected = $derived(groups?.find((g) => g.id === groupId) ?? null)
+  // Порядок дерева (родитель, потом его подгруппы); у подгруппы перед именем — путь предков.
+  // Тренировка группы берёт слова всех её подгрупп (§18.2), due — тоже по поддереву.
+  const rows = $derived(groups ? visibleRows(groups) : [])
 
   function savedStrategy(): Strategy {
     try {
@@ -86,10 +90,13 @@
     <section>
       <h2>{t('training.group')}</h2>
       <div class="groups">
-        {#each groups as g (g.id)}
+        {#each rows as { group: g, depth } (g.id)}
           <button class="group" class:active={g.id === groupId} aria-pressed={g.id === groupId}
             onclick={() => { groupId = g.id; nothingDue = false }}>
             <span class="dot" style:background={g.color ?? 'var(--c-surface)'}></span>
+            {#if depth > 0}
+              <span class="path muted">{pathTo(groups, g.id).slice(0, -1).map((p) => p.name).join(' › ')} ›</span>
+            {/if}
             <span class="name">#{g.name}</span>
             <span class="due" class:zero={g.due === 0}>{g.due}</span>
           </button>
@@ -172,6 +179,10 @@
   .strategy.active {
     background: var(--c-green-soft);
     box-shadow: var(--shadow);
+  }
+  .path {
+    font-weight: 400;
+    font-size: var(--fs-sm);
   }
   .group {
     display: flex;

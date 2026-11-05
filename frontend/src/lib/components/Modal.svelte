@@ -89,6 +89,7 @@
   }
   footer {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--s-2);
     margin-top: var(--s-5);

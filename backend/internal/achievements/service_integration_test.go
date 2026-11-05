@@ -106,7 +106,7 @@ func TestService_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 9 || list[0].Code != FirstSession {
+	if len(list) != 15 || list[0].Code != FirstSession {
 		t.Fatalf("list = %+v", list)
 	}
 	byCode := map[Code]Achievement{}
@@ -165,10 +165,41 @@ func TestModule_HTTP(t *testing.T) {
 			UnlockedAt *time.Time `json:"unlockedAt"`
 		} `json:"achievements"`
 	}
-	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil || rr.Code != 200 || len(body.Achievements) != 9 {
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil || rr.Code != 200 || len(body.Achievements) != 15 {
 		t.Fatalf("GET: %d %+v %v", rr.Code, body, err)
 	}
 	if a := body.Achievements[1]; a.Code != "streak_3" || a.Target != 3 || a.UnlockedAt != nil {
 		t.Errorf("streak_3 = %+v", a)
+	}
+}
+
+// Ачивки «Игры» (§18.3, B5): дела-листья с done_at и часы чистой работы в фокусе.
+func TestService_Check_Game(t *testing.T) {
+	svc, fx, _ := newTestEnv(t)
+	fx.Exec(t, `INSERT INTO task_columns (name, position, created_at) VALUES ('c', 0, $1)`, testNow)
+	for i := range 10 {
+		done := any(testNow)
+		if i == 9 {
+			done = nil // девятое открытое — пока 9 выполненных
+		}
+		fx.Exec(t, `INSERT INTO tasks (title, blocks, importance, column_id, position, done_at, created_at, updated_at)
+			VALUES ($1, 1, 5, 1, $2, $3, $4, $4)`, fmt.Sprintf("t%d", i), i, done, testNow)
+	}
+	// Сессии: 6 ч работы с часовым перерывом (= 5 ч), 5 ч ровно, и отменённая — не в счёт.
+	start := testNow.Add(-24 * time.Hour)
+	fx.Exec(t, `INSERT INTO focus_sessions (task_id, task_title, day, planned_blocks, started_at, work_started_at, finished_at, outcome) VALUES
+		(1, 't0', '2026-11-04', 2, $1, $1, $1::timestamptz + interval '6 hours', 'done'),
+		(2, 't1', '2026-11-04', 2, $1, $1, $1::timestamptz + interval '5 hours' - interval '1 second', 'stopped'),
+		(3, 't2', '2026-11-04', 2, $1, $1, $1::timestamptz + interval '9 hours', 'abandoned')`, start)
+	fx.Exec(t, `INSERT INTO focus_breaks (session_id, started_at, ended_at) VALUES (1, $1, $1::timestamptz + interval '1 hour')`, start)
+
+	// 9 дел, 9:59:59 работы — ещё ничего.
+	if got := mustCheck(t, svc); len(got) != 0 {
+		t.Fatalf("unlocked too early: %v", got)
+	}
+	fx.Exec(t, `UPDATE tasks SET done_at = $1 WHERE title = 't9'`, testNow)
+	fx.Exec(t, `UPDATE focus_sessions SET finished_at = finished_at + interval '1 second' WHERE id = 2`)
+	if got := mustCheck(t, svc); !slices.Equal(got, []Code{GameTasks10, GameHours10}) {
+		t.Errorf("unlocked = %v", got)
 	}
 }

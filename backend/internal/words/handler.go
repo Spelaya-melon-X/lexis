@@ -36,7 +36,7 @@ func (m *Module) bulk(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// list — GET /api/words?group=<id>&level=<1..5>, оба параметра необязательны.
+// list — GET /api/words?group=<id>&subtree=true&level=<1..5>, все параметры необязательны.
 func (m *Module) list(w http.ResponseWriter, r *http.Request) error {
 	f, err := parseListFilter(r)
 	if err != nil {
@@ -67,6 +67,7 @@ func parseListFilter(r *http.Request) (ListFilter, error) {
 			return f, httpx.BadRequest("invalid_group", "group must be a positive id")
 		}
 		f.GroupID = &id
+		f.Subtree = q.Get("subtree") == "true"
 	}
 	return f, nil
 }

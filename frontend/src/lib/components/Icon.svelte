@@ -20,6 +20,10 @@
     trophy: 'M8 4h8v5a4 4 0 0 1-8 0z M8 6H4v2a4 4 0 0 0 4 4 M16 6h4v2a4 4 0 0 1-4 4 M12 13v4 M8 21h8 M10 17h4v4h-4z',
     chevronLeft: 'M15 5l-7 7 7 7',
     chevronRight: 'M9 5l7 7-7 7',
+    chevronDown: 'M5 9l7 7 7-7',
+    more: 'M5 12v.01 M12 12v.01 M19 12v.01',
+    pause: 'M8 5v14 M16 5v14',
+    dumbbell: 'M6 7v10 M18 7v10 M3 9v6 M21 9v6 M6 12h12',
     alert: 'M12 3l10 18H2z M12 10v5 M12 18v.01',
     clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 7v5l3 3',
     book: 'M4 4h6a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4z M20 4h-6a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h6z',
@@ -29,6 +33,10 @@
     target: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 12v.01',
     note: 'M5 3h10l4 4v14H5z M15 3v4h4 M9 12h6 M9 16h6',
     list: 'M9 6h11 M9 12h11 M9 18h11 M4 6v.01 M4 12v.01 M4 18v.01',
+    gamepad: 'M6 8h12a4 4 0 0 1 4 4v2a3 3 0 0 1-5.5 1.6L15 14H9l-1.5 1.6A3 3 0 0 1 2 14v-2a4 4 0 0 1 4-4z M7 10.5v3 M5.5 12h3 M16 11v.01 M18 13v.01',
+    board: 'M3 4h18v16H3z M9 4v16 M15 4v16',
+    graph: 'M10 3h4v4h-4z M3 17h4v4H3z M17 17h4v4h-4z M12 7v5 M5 17v-5h14v5',
+    steps: 'M4 5h9 M8 12h9 M12 19h9 M4 5v7h4 M8 12v7h4',
     repeat: 'M17 2l4 4-4 4 M3 12V10a4 4 0 0 1 4-4h14 M7 22l-4-4 4-4 M21 12v2a4 4 0 0 1-4 4H3',
   } as const
 

@@ -115,3 +115,33 @@ sql:
         out: internal/habits/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/tasks.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/tasks/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/focus.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/focus/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/sport.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/sport/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

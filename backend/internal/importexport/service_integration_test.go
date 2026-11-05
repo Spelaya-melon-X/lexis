@@ -117,6 +117,10 @@ func seed(t *testing.T, ws *words.Service, fx dbtest.Fixtures) {
 
 	fx.Exec(t, `INSERT INTO achievements (code, unlocked_at) VALUES ('first_session', $1)`, fin)
 	fx.Exec(t, `INSERT INTO settings (key, value) VALUES ('language', '"en"'), ('new_words_limit', '7')`)
+	// Дерево групп (v3): verbs → food → nouns. Родитель food (verbs) стоит в файле позже —
+	// восстановление не должно зависеть от порядка.
+	fx.Exec(t, `UPDATE groups SET parent_id = (SELECT id FROM groups WHERE name = 'verbs') WHERE name = 'food'`)
+	fx.Exec(t, `UPDATE groups SET parent_id = (SELECT id FROM groups WHERE name = 'food') WHERE name = 'nouns'`)
 	// Дыра в id: удалённое слово — восстановление не должно зависеть от непрерывности id.
 	fx.Exec(t, `DELETE FROM words WHERE term = 'go_went_gone'`)
 	if _, err := ws.Bulk(ctx, "go_went_gone || идти || I [go] <> I [went] || verbs"); err != nil {
@@ -147,6 +151,39 @@ func seed(t *testing.T, ws *words.Service, fx dbtest.Fixtures) {
 		($1, '', '2026-11-01', '2026-11-09', $2), (NULL, 'Спать до 23', '2026-12-01', '2026-12-07', $2)`, run, fin)
 	fx.Exec(t, `INSERT INTO habit_notes (habit_id, kind, body, created_at, updated_at) VALUES
 		($1, 'observation', 'первая', $2, $2), (NULL, 'insight', 'вторая', $2, $2)`, run, fin)
+
+	// «Игра»: дыра в id типа (удалённый), дело без типа, выполненное дело, вторая колонка раньше первой по порядку.
+	fx.Exec(t, `INSERT INTO task_types (name, color, position, created_at) VALUES ('удалённый', NULL, 0, $1), ('Учёба', '#16a34a', 1, $1)`, fin)
+	fx.Exec(t, `DELETE FROM task_types WHERE name = 'удалённый'`)
+	fx.Exec(t, `INSERT INTO task_columns (name, position, created_at) VALUES ('Входящие', 1, $1), ('Сегодня', 0, $1)`, fin)
+	study := fx.Int(t, `SELECT id FROM task_types WHERE name = 'Учёба'`)
+	inbox := fx.Int(t, `SELECT id FROM task_columns WHERE name = 'Входящие'`)
+	fx.Exec(t, `INSERT INTO tasks (title, blocks, importance, deadline, type_id, column_id, position, note, done_at, created_at, updated_at) VALUES
+		('Курсовая', 12, 8, '2026-11-20', $1, $2, 0, 'глава 1', NULL, $3, $3),
+		('Шкаф', 2, 3, NULL, NULL, $2, 1, '', $3, $3, $3)`, study, inbox, fin)
+	// Шаг курсовой (B2): ссылка на родителя должна пережить круговой бэкап.
+	fx.Exec(t, `INSERT INTO tasks (parent_id, title, blocks, importance, column_id, position, created_at, updated_at)
+		SELECT id, 'Глава 1', 4, 8, column_id, 2, $1, $1 FROM tasks WHERE title = 'Курсовая'`, fin)
+	// План дня (B3): пункт на шаг курсовой.
+	fx.Exec(t, `INSERT INTO plan_items (day, task_id, position, blocks, start_min) SELECT '2026-11-02', id, 0, 2, 600 FROM tasks WHERE title = 'Глава 1'`)
+	// Фокус и награды (B4): ритуал, завершённая сессия с перерывом и отвлечением, награда, начисление и трата.
+	fx.Exec(t, `INSERT INTO ritual_items (text, position) VALUES ('Налил воды', 0), ('Не беспокоить', 1)`)
+	fx.Exec(t, `INSERT INTO focus_sessions (task_id, task_title, day, planned_blocks, started_at, work_started_at, finished_at, outcome)
+		SELECT id, 'Глава 1', '2026-11-02', 2, $1, $1, $1::timestamptz + interval '70 minutes', 'stopped' FROM tasks WHERE title = 'Глава 1'`, fin)
+	sess := fx.Int(t, `SELECT id FROM focus_sessions`)
+	fx.Exec(t, `INSERT INTO focus_breaks (session_id, started_at, ended_at) VALUES ($1, $2, $2::timestamptz + interval '5 minutes')`, sess, fin)
+	fx.Exec(t, `INSERT INTO focus_distractions (session_id, at, trigger, gave_in) VALUES ($1, $2, 'телефон', true)`, sess, fin)
+	fx.Exec(t, `INSERT INTO rewards (title, price, position, created_at) VALUES ('Кино', 2, 0, $1)`, fin)
+	fx.Exec(t, `INSERT INTO points_ledger (at, delta, kind, title, focus_session_id) VALUES ($1, 2, 'focus', 'Глава 1', $2)`, fin, sess)
+	fx.Exec(t, `INSERT INTO points_ledger (at, delta, kind, title, reward_id) SELECT $1, -2, 'purchase', 'Кино', id FROM rewards`, fin)
+
+	// Спорт (C1): дыра в id упражнения, тренировка с упражнением на вес и упражнением на время.
+	fx.Exec(t, `INSERT INTO exercises (name, created_at) VALUES ('удалённое', $1), ('Присед', $1), ('Подтягивания', $1)`, fin)
+	fx.Exec(t, `DELETE FROM exercises WHERE name = 'удалённое'`)
+	fx.Exec(t, `INSERT INTO workouts (day, title, notes, duration_min, kcal, created_at, updated_at) VALUES ('2026-11-01', 'Ноги', 'тяжело', 60, 420, $1, $1)`, fin)
+	fx.Exec(t, `INSERT INTO workout_exercises (workout_id, exercise_id, position, sets, reps, weight) SELECT 1, id, 0, 3, 5, 82.5 FROM exercises WHERE name = 'Присед'`)
+	fx.Exec(t, `INSERT INTO workout_exercises (workout_id, exercise_id, position, sets, reps, weight) SELECT 1, id, 1, 4, 8, NULL FROM exercises WHERE name = 'Подтягивания'`)
+	fx.Exec(t, `INSERT INTO meals (day, position, text, kcal, created_at) VALUES ('2026-11-01', 0, 'Каша', 350, $1), ('2026-11-01', 1, 'Яблоко', NULL, $1)`, fin)
 }
 
 // canonical заменяет id порядковыми номерами (ссылки — тоже), чтобы сравнивать снимки
@@ -158,6 +195,12 @@ func canonical(t *testing.T, b Backup) string {
 	for i := range b.Groups {
 		gIdx[b.Groups[i].ID] = int64(i)
 		b.Groups[i].ID = int64(i)
+	}
+	for i := range b.Groups { // отдельным проходом: родитель может стоять позже ребёнка
+		if p := b.Groups[i].ParentID; p != nil {
+			v := gIdx[*p]
+			b.Groups[i].ParentID = &v
+		}
 	}
 	for i := range b.Words {
 		wIdx[b.Words[i].ID] = int64(i)
@@ -189,6 +232,66 @@ func canonical(t *testing.T, b Backup) string {
 			b.Habits.Notes[i].HabitID = remap(b.Habits.Notes[i].HabitID)
 		}
 	}
+	if b.Game != nil {
+		tIdx, cIdx := map[int64]int64{}, map[int64]int64{}
+		for i := range b.Game.Types {
+			tIdx[b.Game.Types[i].ID] = int64(i)
+			b.Game.Types[i].ID = int64(i)
+		}
+		for i := range b.Game.Columns {
+			cIdx[b.Game.Columns[i].ID] = int64(i)
+			b.Game.Columns[i].ID = int64(i)
+		}
+		taskIdx := map[int64]int64{} // до замены id: родитель может стоять позже шага
+		for i, x := range b.Game.Tasks {
+			taskIdx[x.ID] = int64(i)
+		}
+		for i := range b.Game.Tasks {
+			x := &b.Game.Tasks[i]
+			x.ID, x.ColumnID = int64(i), cIdx[x.ColumnID]
+			if x.TypeID != nil {
+				x.TypeID = new(tIdx[*x.TypeID])
+			}
+			if x.ParentID != nil {
+				x.ParentID = new(taskIdx[*x.ParentID])
+			}
+		}
+		for i := range b.Game.Plans {
+			b.Game.Plans[i].TaskID = taskIdx[b.Game.Plans[i].TaskID]
+		}
+		sIdx, rIdx := map[int64]int64{}, map[int64]int64{}
+		for i := range b.Game.Sessions {
+			x := &b.Game.Sessions[i]
+			sIdx[x.ID], x.ID = int64(i), int64(i)
+			if x.TaskID != nil {
+				x.TaskID = new(taskIdx[*x.TaskID])
+			}
+		}
+		for i := range b.Game.Rewards {
+			rIdx[b.Game.Rewards[i].ID], b.Game.Rewards[i].ID = int64(i), int64(i)
+		}
+		for i := range b.Game.Ledger {
+			x := &b.Game.Ledger[i]
+			if x.SessionID != nil {
+				x.SessionID = new(sIdx[*x.SessionID])
+			}
+			if x.RewardID != nil {
+				x.RewardID = new(rIdx[*x.RewardID])
+			}
+		}
+	}
+	if b.Sport != nil {
+		eIdx := map[int64]int64{}
+		for i := range b.Sport.Exercises {
+			eIdx[b.Sport.Exercises[i].ID], b.Sport.Exercises[i].ID = int64(i), int64(i)
+		}
+		for i := range b.Sport.Workouts {
+			for j := range b.Sport.Workouts[i].Exercises {
+				x := &b.Sport.Workouts[i].Exercises[j]
+				x.ExerciseID = eIdx[x.ExerciseID]
+			}
+		}
+	}
 	for i := range b.Sessions {
 		b.Sessions[i].ID = int64(i)
 		if g := b.Sessions[i].GroupID; g != nil {
@@ -204,6 +307,22 @@ func canonical(t *testing.T, b Backup) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// groupParents — имя группы → имя родителя ("" — корень).
+func groupParents(b Backup) map[string]string {
+	names := map[int64]string{}
+	for _, g := range b.Groups {
+		names[g.ID] = g.Name
+	}
+	m := map[string]string{}
+	for _, g := range b.Groups {
+		m[g.Name] = ""
+		if g.ParentID != nil {
+			m[g.Name] = names[*g.ParentID]
+		}
+	}
+	return m
 }
 
 func TestBackup_RoundTrip(t *testing.T) {
@@ -227,6 +346,19 @@ func TestBackup_RoundTrip(t *testing.T) {
 	if h := b1.Habits; h == nil || len(h.Habits) != 2 || len(h.Checkins) != 2 || len(h.Goals) != 2 || len(h.Notes) != 2 || h.Habits[1].ArchivedAt == nil {
 		t.Fatalf("habits section = %+v", b1.Habits)
 	}
+	if g := b1.Game; g == nil || len(g.Types) != 1 || len(g.Columns) != 2 || len(g.Tasks) != 3 || g.Tasks[1].DoneAt == nil || g.Tasks[2].ParentID == nil || *g.Tasks[0].Deadline != "2026-11-20" ||
+		len(g.Plans) != 1 || len(g.Ritual) != 2 || len(g.Sessions) != 1 || len(g.Sessions[0].Breaks) != 1 ||
+		len(g.Sessions[0].Distractions) != 1 || len(g.Rewards) != 1 || len(g.Ledger) != 2 {
+		t.Fatalf("game section = %+v", b1.Game)
+	}
+	if sp := b1.Sport; sp == nil || len(sp.Exercises) != 2 || len(sp.Workouts) != 1 || len(sp.Workouts[0].Exercises) != 2 ||
+		sp.Workouts[0].Exercises[0].Sets != 3 || *sp.Workouts[0].Exercises[0].Weight != 82.5 || sp.Workouts[0].Exercises[1].Weight != nil ||
+		len(sp.Meals) != 2 || sp.Meals[1].Text != "Яблоко" || sp.Meals[1].Kcal != nil {
+		t.Fatalf("sport section = %+v", b1.Sport)
+	}
+	if parents := groupParents(b1); parents["food"] != "verbs" || parents["nouns"] != "food" || parents["verbs"] != "" {
+		t.Fatalf("group tree in backup = %v", parents)
+	}
 	if len(b1.Words) != 3 || len(b1.Groups) != 3 || len(b1.Sessions) != 2 || len(b1.Achievements) != 1 || len(b1.Settings) != 2 {
 		t.Fatalf("snapshot = %d words %d groups %d sessions %d ach %d settings",
 			len(b1.Words), len(b1.Groups), len(b1.Sessions), len(b1.Achievements), len(b1.Settings))
@@ -242,9 +374,10 @@ func TestBackup_RoundTrip(t *testing.T) {
 	fx.Exec(t, `DELETE FROM habit_notes`)
 	fx.Exec(t, `DELETE FROM week_reviews`)
 	fx.Exec(t, `INSERT INTO habits (name, kind, position, created_at) VALUES ('лишняя', 'positive', 5, $1)`, testDay)
+	fx.Exec(t, `DELETE FROM tasks WHERE title = 'Шкаф'`)
 	raw, _ := json.Marshal(b1)
 	res := mustImport(t, svc, string(raw))
-	if res.Kind != "backup" || res.Restored == nil || *res.Restored != (RestoreCounts{Groups: 3, Words: 3, Sessions: 2, Reviews: 3, Achievements: 1, Days: 3, Habits: 2}) {
+	if res.Kind != "backup" || res.Restored == nil || *res.Restored != (RestoreCounts{Groups: 3, Words: 3, Sessions: 2, Reviews: 3, Achievements: 1, Days: 3, Habits: 2, Tasks: 3, Workouts: 1}) {
 		t.Fatalf("restore result = %+v", res)
 	}
 
@@ -254,6 +387,9 @@ func TestBackup_RoundTrip(t *testing.T) {
 	}
 	if c1, c2 := canonical(t, b1), canonical(t, b2); c1 != c2 {
 		t.Errorf("round trip differs:\n--- before\n%s\n--- after\n%s", c1, c2)
+	}
+	if parents := groupParents(b2); parents["food"] != "verbs" || parents["nouns"] != "food" {
+		t.Errorf("group tree after restore = %v", parents)
 	}
 	// После восстановления обычная работа продолжается: новые id не конфликтуют.
 	if _, err := ws.Bulk(ctx, "new || новое || || food"); err != nil {
@@ -270,17 +406,29 @@ func TestRestore_V1KeepsJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.Version, b.Journal, b.Habits = 1, nil, nil
+	b.Version, b.Journal, b.Habits, b.Game, b.Sport = 1, nil, nil, nil, nil
 	b.Words = b.Words[:1]
 	b.Sessions = nil
+	for i := range b.Groups { // в настоящем v1-файле поля parentId нет
+		b.Groups[i].ParentID = nil
+	}
 
 	raw, _ := json.Marshal(b)
 	res := mustImport(t, svc, string(raw))
-	if res.Restored == nil || res.Restored.Words != 1 || res.Restored.Days != 0 {
+	if res.Restored == nil || res.Restored.Words != 1 || res.Restored.Days != 0 || res.Restored.Tasks != 0 {
 		t.Fatalf("restored = %+v", res.Restored)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM tasks`); n != 3 {
+		t.Errorf("game must survive v1 restore, tasks = %d", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM workout_exercises`); n != 2 {
+		t.Errorf("sport must survive v1 restore, entries = %d", n)
 	}
 	if n := fx.Int(t, `SELECT count(*) FROM words`); n != 1 {
 		t.Errorf("words = %d, want 1", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM groups WHERE parent_id IS NOT NULL`); n != 0 {
+		t.Errorf("v1 restore: all groups must be roots, %d nested", n)
 	}
 	if n := fx.Int(t, `SELECT count(*) FROM days`) + fx.Int(t, `SELECT count(*) FROM day_wins`) + fx.Int(t, `SELECT count(*) FROM dopamine_slots`); n != 3+2+3 {
 		t.Errorf("journal must survive v1 restore, rows = %d", n)
@@ -343,7 +491,9 @@ func TestReset_All(t *testing.T) {
 		t.Fatalf("Reset all: %v", err)
 	}
 	for _, table := range []string{"words", "groups", "training_sessions", "achievements", "days", "day_wins", "dopamine_slots",
-		"week_reviews", "week_review_blocks", "habits", "habit_checkins", "habit_goals", "habit_notes"} {
+		"week_reviews", "week_review_blocks", "habits", "habit_checkins", "habit_goals", "habit_notes",
+		"task_types", "task_columns", "tasks", "plan_items", "ritual_items", "focus_sessions", "focus_breaks",
+		"focus_distractions", "rewards", "points_ledger", "exercises", "workouts", "workout_exercises", "meals"} {
 		if n := fx.Int(t, `SELECT count(*) FROM `+table); n != 0 {
 			t.Errorf("%s not empty: %d", table, n)
 		}
@@ -372,6 +522,9 @@ func TestReset(t *testing.T) {
 	}
 	if n := fx.Int(t, `SELECT count(*) FROM habits`); n != 2 {
 		t.Errorf("reset of English must keep habits, got %d", n)
+	}
+	if n := fx.Int(t, `SELECT count(*) FROM tasks`); n != 3 {
+		t.Errorf("reset of English must keep game, got %d", n)
 	}
 	if id := fx.Group(t, "fresh"); id != 1 {
 		t.Errorf("ids must restart, got %d", id)

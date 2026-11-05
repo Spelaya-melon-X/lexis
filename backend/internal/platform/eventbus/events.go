@@ -37,6 +37,23 @@ type WordsAdded struct {
 	At      time.Time
 }
 
+// FocusFinished — завершена фокус-сессия «Игры» (§18.3, B5). Отменённые (abandoned) не публикуются:
+// ни времени, ни очков у них нет.
+type FocusFinished struct {
+	SessionID int64
+	WorkSec   int
+	Outcome   string // done | stopped
+	At        time.Time
+}
+
+// TaskCompleted — дело-лист отмечено выполненным (с доски, в распорядке или «Я закончил» в фокусе).
+type TaskCompleted struct {
+	TaskID int64
+	At     time.Time
+}
+
 func (SessionFinished) isEvent()  {}
+func (FocusFinished) isEvent()    {}
+func (TaskCompleted) isEvent()    {}
 func (WordLevelChanged) isEvent() {}
 func (WordsAdded) isEvent()       {}

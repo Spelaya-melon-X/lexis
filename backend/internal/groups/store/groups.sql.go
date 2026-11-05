@@ -11,30 +11,38 @@ import (
 )
 
 const countFinishedSessions = `-- name: CountFinishedSessions :one
+WITH RECURSIVE sub (id) AS (
+    SELECT $3::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
 SELECT count(*)::int FROM training_sessions
-WHERE group_id = $1::bigint AND finished_at >= $2::timestamptz AND finished_at < $3::timestamptz
+WHERE group_id IN (SELECT id FROM sub) AND finished_at >= $1::timestamptz AND finished_at < $2::timestamptz
 `
 
 type CountFinishedSessionsParams struct {
-	GroupID int64
 	FromAt  time.Time
 	ToAt    time.Time
+	GroupID int64
 }
 
+// Сессии по группе и её потомкам.
 func (q *Queries) CountFinishedSessions(ctx context.Context, arg CountFinishedSessionsParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countFinishedSessions, arg.GroupID, arg.FromAt, arg.ToAt)
+	row := q.db.QueryRow(ctx, countFinishedSessions, arg.FromAt, arg.ToAt, arg.GroupID)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
 }
 
-const deleteGroup = `-- name: DeleteGroup :execrows
-DELETE FROM groups WHERE id = $1
+const deleteGroups = `-- name: DeleteGroups :execrows
+DELETE FROM groups WHERE id = ANY($1::bigint[])
 `
 
 // word_groups — каскадом, training_sessions.group_id → NULL (история сохраняется).
-func (q *Queries) DeleteGroup(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteGroup, id)
+// Удаляем всё поддерево одним запросом: RESTRICT на parent_id проверяется в конце оператора,
+// когда детей уже нет.
+func (q *Queries) DeleteGroups(ctx context.Context, ids []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteGroups, ids)
 	if err != nil {
 		return 0, err
 	}
@@ -42,7 +50,7 @@ func (q *Queries) DeleteGroup(ctx context.Context, id int64) (int64, error) {
 }
 
 const getGroup = `-- name: GetGroup :one
-SELECT id, name, color, created_at FROM groups WHERE id = $1
+SELECT id, name, color, created_at, parent_id FROM groups WHERE id = $1
 `
 
 func (q *Queries) GetGroup(ctx context.Context, id int64) (Group, error) {
@@ -53,20 +61,65 @@ func (q *Queries) GetGroup(ctx context.Context, id int64) (Group, error) {
 		&i.Name,
 		&i.Color,
 		&i.CreatedAt,
+		&i.ParentID,
 	)
 	return i, err
 }
 
+const insertGroup = `-- name: InsertGroup :one
+INSERT INTO groups (name, parent_id, color, created_at) VALUES ($1, $2, $3, $4)
+RETURNING id
+`
+
+type InsertGroupParams struct {
+	Name     string
+	ParentID *int64
+	Color    *string
+	Now      time.Time
+}
+
+func (q *Queries) InsertGroup(ctx context.Context, arg InsertGroupParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertGroup,
+		arg.Name,
+		arg.ParentID,
+		arg.Color,
+		arg.Now,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const liftChildren = `-- name: LiftChildren :exec
+UPDATE groups SET parent_id = $1 WHERE parent_id = $2::bigint
+`
+
+type LiftChildrenParams struct {
+	NewParent *int64
+	ID        int64
+}
+
+// Подгруппы удаляемой группы поднимаются на её уровень.
+func (q *Queries) LiftChildren(ctx context.Context, arg LiftChildrenParams) error {
+	_, err := q.db.Exec(ctx, liftChildren, arg.NewParent, arg.ID)
+	return err
+}
+
 const listFinishedSessions = `-- name: ListFinishedSessions :many
+WITH RECURSIVE sub (id) AS (
+    SELECT $3::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
 SELECT finished_at::timestamptz AS finished_at, total, good FROM training_sessions
-WHERE group_id = $1::bigint AND finished_at >= $2::timestamptz AND finished_at < $3::timestamptz
+WHERE group_id IN (SELECT id FROM sub) AND finished_at >= $1::timestamptz AND finished_at < $2::timestamptz
 ORDER BY finished_at
 `
 
 type ListFinishedSessionsParams struct {
-	GroupID int64
 	FromAt  time.Time
 	ToAt    time.Time
+	GroupID int64
 }
 
 type ListFinishedSessionsRow struct {
@@ -75,9 +128,9 @@ type ListFinishedSessionsRow struct {
 	Good       int32
 }
 
-// Для графика продуктивности; по дням раскладывает groups.Productivity в TZ пользователя.
+// Для графика продуктивности (по поддереву); по дням раскладывает groups.Productivity в TZ пользователя.
 func (q *Queries) ListFinishedSessions(ctx context.Context, arg ListFinishedSessionsParams) ([]ListFinishedSessionsRow, error) {
-	rows, err := q.db.Query(ctx, listFinishedSessions, arg.GroupID, arg.FromAt, arg.ToAt)
+	rows, err := q.db.Query(ctx, listFinishedSessions, arg.FromAt, arg.ToAt, arg.GroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -96,22 +149,62 @@ func (q *Queries) ListFinishedSessions(ctx context.Context, arg ListFinishedSess
 	return items, nil
 }
 
+const listGroupNodes = `-- name: ListGroupNodes :many
+SELECT id, name, parent_id FROM groups
+`
+
+type ListGroupNodesRow struct {
+	ID       int64
+	Name     string
+	ParentID *int64
+}
+
+func (q *Queries) ListGroupNodes(ctx context.Context) ([]ListGroupNodesRow, error) {
+	rows, err := q.db.Query(ctx, listGroupNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupNodesRow
+	for rows.Next() {
+		var i ListGroupNodesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ParentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGroupSummaries = `-- name: ListGroupSummaries :many
 
-SELECT g.id, g.name, g.color, g.created_at,
+WITH RECURSIVE sub (root, id) AS (
+    SELECT g.id, g.id FROM groups g
+    UNION ALL
+    SELECT sub.root, c.id FROM sub JOIN groups c ON c.parent_id = sub.id
+),
+sub_words AS (
+    SELECT DISTINCT sub.root, wg.word_id FROM sub JOIN word_groups wg ON wg.group_id = sub.id
+)
+SELECT g.id, g.name, g.color, g.parent_id, g.created_at,
        count(w.id)::int                                                          AS words,
+       (SELECT count(*) FROM word_groups o WHERE o.group_id = g.id)::int         AS own_words,
        count(w.id) FILTER (WHERE w.level < 5 AND w.next_review_at < $1)::int AS due,
        count(w.id) FILTER (WHERE w.level = 1)::int                               AS level1,
        count(w.id) FILTER (WHERE w.level = 2)::int                               AS level2,
        count(w.id) FILTER (WHERE w.level = 3)::int                               AS level3,
        count(w.id) FILTER (WHERE w.level = 4)::int                               AS level4,
        count(w.id) FILTER (WHERE w.level = 5)::int                               AS level5,
+       -- предки g — это root у пар (root, g): сессия предка тренировала и слова g
        EXISTS (SELECT 1 FROM training_sessions s
-               WHERE s.group_id = g.id
+               WHERE s.group_id IN (SELECT a.root FROM sub a WHERE a.id = g.id)
                  AND s.finished_at >= $2::timestamptz AND s.finished_at < $1)::bool AS trained_today
 FROM groups g
-LEFT JOIN word_groups wg ON wg.group_id = g.id
-LEFT JOIN words w ON w.id = wg.word_id
+LEFT JOIN sub_words sw ON sw.root = g.id
+LEFT JOIN words w ON w.id = sw.word_id
 WHERE $3::bigint IS NULL OR g.id = $3
 GROUP BY g.id
 ORDER BY g.name
@@ -127,8 +220,10 @@ type ListGroupSummariesRow struct {
 	ID           int64
 	Name         string
 	Color        *string
+	ParentID     *int64
 	CreatedAt    time.Time
 	Words        int32
+	OwnWords     int32
 	Due          int32
 	Level1       int32
 	Level2       int32
@@ -139,8 +234,11 @@ type ListGroupSummariesRow struct {
 }
 
 // Запросы модуля groups. «Сегодня» — полуинтервал [day_start, day_end), посчитанный в Go.
-// Одна строка на группу: число слов, due, распределение по уровням и была ли сегодня
-// завершённая сессия. LEFT JOIN — чтобы пустые группы тоже попали (с нулями).
+// Дерево групп (§18.2): всё «по группе» считается по поддереву — сама группа + потомки.
+// Одна строка на группу: агрегаты по поддереву (слова уникально — слово в двух подгруппах
+// считается один раз), свои слова, была ли сегодня сессия по самой группе или её предку.
+// sub(root, id) — замыкание «предок → потомок», включая пары (g, g). Групп — десятки,
+// поэтому строим его целиком даже для одной группы.
 // id NULL → все группы (для списка), иначе одна (для GET /:id).
 func (q *Queries) ListGroupSummaries(ctx context.Context, arg ListGroupSummariesParams) ([]ListGroupSummariesRow, error) {
 	rows, err := q.db.Query(ctx, listGroupSummaries, arg.DayEnd, arg.DayStart, arg.ID)
@@ -155,8 +253,10 @@ func (q *Queries) ListGroupSummaries(ctx context.Context, arg ListGroupSummaries
 			&i.ID,
 			&i.Name,
 			&i.Color,
+			&i.ParentID,
 			&i.CreatedAt,
 			&i.Words,
+			&i.OwnWords,
 			&i.Due,
 			&i.Level1,
 			&i.Level2,
@@ -175,18 +275,34 @@ func (q *Queries) ListGroupSummaries(ctx context.Context, arg ListGroupSummaries
 	return items, nil
 }
 
+const lockTree = `-- name: LockTree :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+// Все изменения дерева — под одной транзакционной блокировкой (см. tree.LockKey).
+func (q *Queries) LockTree(ctx context.Context, key int64) error {
+	_, err := q.db.Exec(ctx, lockTree, key)
+	return err
+}
+
 const updateGroup = `-- name: UpdateGroup :execrows
-UPDATE groups SET name = $1, color = $2 WHERE id = $3
+UPDATE groups SET name = $1, color = $2, parent_id = $3 WHERE id = $4
 `
 
 type UpdateGroupParams struct {
-	Name  string
-	Color *string
-	ID    int64
+	Name     string
+	Color    *string
+	ParentID *int64
+	ID       int64
 }
 
 func (q *Queries) UpdateGroup(ctx context.Context, arg UpdateGroupParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateGroup, arg.Name, arg.Color, arg.ID)
+	result, err := q.db.Exec(ctx, updateGroup,
+		arg.Name,
+		arg.Color,
+		arg.ParentID,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}

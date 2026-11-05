@@ -1,9 +1,12 @@
 package words
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"lexis/internal/groups/tree"
 )
 
 // Формат строки (SPEC §4):
@@ -31,6 +34,11 @@ const (
 	CodeInvalidVerbForms   ErrorCode = "invalid_verb_forms"
 	CodeUnbalancedBrackets ErrorCode = "unbalanced_brackets"
 	CodeEmptyHighlight     ErrorCode = "empty_highlight"
+	CodeInvalidGroupPath   ErrorCode = "invalid_group_path" // #a//b, #a/a, больше tree.MaxDepth частей
+
+	// Ошибки сохранения, а не разбора: зависят от групп в БД, превью их не знает (§18.2).
+	CodeGroupPathConflict ErrorCode = "group_path_conflict" // группа из пути уже лежит под другим родителем
+	CodeGroupTooDeep      ErrorCode = "group_too_deep"      // путь вылезает за tree.MaxDepth уровней
 )
 
 type ParseResult struct {
@@ -44,7 +52,7 @@ type Card struct {
 	Forms       []string  `json:"forms,omitempty"` // ровно 3 или nil
 	Translation string    `json:"translation"`
 	Examples    []Example `json:"examples,omitempty"` // уникальны по Text
-	Groups      []string  `json:"groups,omitempty"`   // нормализованные, без #, уникальные
+	Groups      []string  `json:"groups,omitempty"`   // нормализованные, без #, уникальные; путь — "a/b" (§18.2)
 }
 
 type Example struct {
@@ -166,7 +174,10 @@ func parseFields(rawTerm, rawTranslation, rawExamples, rawTags string) (Card, Er
 		}
 		card.Examples = appendExample(card.Examples, ex)
 	}
-	card.Groups = parseTags(rawTags)
+	card.Groups, code = parseTags(rawTags)
+	if code != "" {
+		return Card{}, code
+	}
 	return card, ""
 }
 
@@ -259,14 +270,36 @@ func ParseExample(raw string) (Example, ErrorCode) {
 }
 
 // parseTags: "#Food, verbs; #food" → [food verbs]. Разделитель — пробел, запятая или ";".
-func parseTags(s string) []string {
+// "/" внутри тега — путь в дереве групп (§18.2): "#Travel/Airport" → "travel/airport".
+func parseTags(s string) ([]string, ErrorCode) {
 	var tags []string
 	for _, f := range strings.FieldsFunc(s, isTagSep) {
-		if tag := normalizeTag(f); tag != "" {
-			tags = appendUnique(tags, tag)
+		tag := normalizeTag(f)
+		if tag == "" {
+			continue
+		}
+		if strings.Contains(tag, tree.PathSep) && !validPath(SplitGroupPath(tag)) {
+			return nil, CodeInvalidGroupPath
+		}
+		tags = appendUnique(tags, tag)
+	}
+	return tags, ""
+}
+
+// SplitGroupPath: "travel/airport" → [travel airport]; тег без "/" — один элемент.
+func SplitGroupPath(tag string) []string { return strings.Split(tag, tree.PathSep) }
+
+// validPath: части непустые, без повторов (#a/a — цикл), не глубже дерева.
+func validPath(parts []string) bool {
+	if len(parts) > tree.MaxDepth {
+		return false
+	}
+	for i, p := range parts {
+		if p == "" || slices.Contains(parts[:i], p) {
+			return false
 		}
 	}
-	return tags
+	return true
 }
 
 // ';' — для CSV-импорта (§4: теги через пробел или ';'); во вводе тоже работает.
@@ -275,9 +308,10 @@ func isTagSep(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) }
 // NormalizeGroupName приводит имя группы к виду тега (§4): "#Food" → "food".
 // ok=false — пусто или несколько тегов ("food verbs"): такое имя нельзя было бы
 // ввести тегом, поэтому и переименовать в него нельзя.
+// "/" тоже нельзя: в теге это разделитель пути, а имя — одна группа.
 func NormalizeGroupName(s string) (name string, ok bool) {
 	name = normalizeTag(s)
-	return name, name != "" && !strings.ContainsFunc(name, isTagSep)
+	return name, name != "" && !strings.ContainsFunc(name, isTagSep) && !strings.Contains(name, tree.PathSep)
 }
 
 // normalizeTag: "#Food" → "food". Пустая строка — тега нет.

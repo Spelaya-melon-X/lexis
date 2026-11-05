@@ -152,6 +152,75 @@ func (q *Queries) RestoreExamples(ctx context.Context, arg []RestoreExamplesPara
 	return q.db.CopyFrom(ctx, []string{"word_examples"}, []string{"word_id", "position", "sentence"}, &iteratorForRestoreExamples{rows: arg})
 }
 
+// iteratorForRestoreFocusBreaks implements pgx.CopyFromSource.
+type iteratorForRestoreFocusBreaks struct {
+	rows                 []RestoreFocusBreaksParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestoreFocusBreaks) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestoreFocusBreaks) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].SessionID,
+		r.rows[0].StartedAt,
+		r.rows[0].EndedAt,
+	}, nil
+}
+
+func (r iteratorForRestoreFocusBreaks) Err() error {
+	return nil
+}
+
+func (q *Queries) RestoreFocusBreaks(ctx context.Context, arg []RestoreFocusBreaksParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"focus_breaks"}, []string{"session_id", "started_at", "ended_at"}, &iteratorForRestoreFocusBreaks{rows: arg})
+}
+
+// iteratorForRestoreFocusDistractions implements pgx.CopyFromSource.
+type iteratorForRestoreFocusDistractions struct {
+	rows                 []RestoreFocusDistractionsParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestoreFocusDistractions) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestoreFocusDistractions) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].SessionID,
+		r.rows[0].At,
+		r.rows[0].Trigger,
+		r.rows[0].GaveIn,
+	}, nil
+}
+
+func (r iteratorForRestoreFocusDistractions) Err() error {
+	return nil
+}
+
+func (q *Queries) RestoreFocusDistractions(ctx context.Context, arg []RestoreFocusDistractionsParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"focus_distractions"}, []string{"session_id", "at", "trigger", "gave_in"}, &iteratorForRestoreFocusDistractions{rows: arg})
+}
+
 // iteratorForRestoreHabitGoals implements pgx.CopyFromSource.
 type iteratorForRestoreHabitGoals struct {
 	rows                 []RestoreHabitGoalsParams
@@ -225,6 +294,116 @@ func (q *Queries) RestoreHabitNotes(ctx context.Context, arg []RestoreHabitNotes
 	return q.db.CopyFrom(ctx, []string{"habit_notes"}, []string{"habit_id", "kind", "body", "created_at", "updated_at"}, &iteratorForRestoreHabitNotes{rows: arg})
 }
 
+// iteratorForRestoreMeals implements pgx.CopyFromSource.
+type iteratorForRestoreMeals struct {
+	rows                 []RestoreMealsParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestoreMeals) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestoreMeals) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].Day,
+		r.rows[0].Position,
+		r.rows[0].Text,
+		r.rows[0].Kcal,
+		r.rows[0].CreatedAt,
+	}, nil
+}
+
+func (r iteratorForRestoreMeals) Err() error {
+	return nil
+}
+
+func (q *Queries) RestoreMeals(ctx context.Context, arg []RestoreMealsParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"meals"}, []string{"day", "position", "text", "kcal", "created_at"}, &iteratorForRestoreMeals{rows: arg})
+}
+
+// iteratorForRestorePlanItems implements pgx.CopyFromSource.
+type iteratorForRestorePlanItems struct {
+	rows                 []RestorePlanItemsParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestorePlanItems) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestorePlanItems) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].Day,
+		r.rows[0].TaskID,
+		r.rows[0].Position,
+		r.rows[0].Blocks,
+		r.rows[0].StartMin,
+	}, nil
+}
+
+func (r iteratorForRestorePlanItems) Err() error {
+	return nil
+}
+
+func (q *Queries) RestorePlanItems(ctx context.Context, arg []RestorePlanItemsParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"plan_items"}, []string{"day", "task_id", "position", "blocks", "start_min"}, &iteratorForRestorePlanItems{rows: arg})
+}
+
+// iteratorForRestorePoints implements pgx.CopyFromSource.
+type iteratorForRestorePoints struct {
+	rows                 []RestorePointsParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestorePoints) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestorePoints) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].At,
+		r.rows[0].Delta,
+		r.rows[0].Kind,
+		r.rows[0].Title,
+		r.rows[0].FocusSessionID,
+		r.rows[0].RewardID,
+	}, nil
+}
+
+func (r iteratorForRestorePoints) Err() error {
+	return nil
+}
+
+// COPY вставляет в порядке файла — новые id сохраняют порядок ленты.
+func (q *Queries) RestorePoints(ctx context.Context, arg []RestorePointsParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"points_ledger"}, []string{"at", "delta", "kind", "title", "focus_session_id", "reward_id"}, &iteratorForRestorePoints{rows: arg})
+}
+
 // iteratorForRestoreReviews implements pgx.CopyFromSource.
 type iteratorForRestoreReviews struct {
 	rows                 []RestoreReviewsParams
@@ -261,6 +440,39 @@ func (r iteratorForRestoreReviews) Err() error {
 
 func (q *Queries) RestoreReviews(ctx context.Context, arg []RestoreReviewsParams) (int64, error) {
 	return q.db.CopyFrom(ctx, []string{"reviews"}, []string{"session_id", "word_id", "answer", "first_in_session", "level_before", "level_after", "answered_at"}, &iteratorForRestoreReviews{rows: arg})
+}
+
+// iteratorForRestoreRitual implements pgx.CopyFromSource.
+type iteratorForRestoreRitual struct {
+	rows                 []RestoreRitualParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestoreRitual) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestoreRitual) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].Text,
+		r.rows[0].Position,
+	}, nil
+}
+
+func (r iteratorForRestoreRitual) Err() error {
+	return nil
+}
+
+func (q *Queries) RestoreRitual(ctx context.Context, arg []RestoreRitualParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"ritual_items"}, []string{"text", "position"}, &iteratorForRestoreRitual{rows: arg})
 }
 
 // iteratorForRestoreWeekBlocks implements pgx.CopyFromSource.
@@ -397,4 +609,41 @@ func (r iteratorForRestoreWordGroups) Err() error {
 
 func (q *Queries) RestoreWordGroups(ctx context.Context, arg []RestoreWordGroupsParams) (int64, error) {
 	return q.db.CopyFrom(ctx, []string{"word_groups"}, []string{"word_id", "group_id"}, &iteratorForRestoreWordGroups{rows: arg})
+}
+
+// iteratorForRestoreWorkoutExercises implements pgx.CopyFromSource.
+type iteratorForRestoreWorkoutExercises struct {
+	rows                 []RestoreWorkoutExercisesParams
+	skippedFirstNextCall bool
+}
+
+func (r *iteratorForRestoreWorkoutExercises) Next() bool {
+	if len(r.rows) == 0 {
+		return false
+	}
+	if !r.skippedFirstNextCall {
+		r.skippedFirstNextCall = true
+		return true
+	}
+	r.rows = r.rows[1:]
+	return len(r.rows) > 0
+}
+
+func (r iteratorForRestoreWorkoutExercises) Values() ([]interface{}, error) {
+	return []interface{}{
+		r.rows[0].WorkoutID,
+		r.rows[0].ExerciseID,
+		r.rows[0].Position,
+		r.rows[0].Sets,
+		r.rows[0].Reps,
+		r.rows[0].Weight,
+	}, nil
+}
+
+func (r iteratorForRestoreWorkoutExercises) Err() error {
+	return nil
+}
+
+func (q *Queries) RestoreWorkoutExercises(ctx context.Context, arg []RestoreWorkoutExercisesParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"workout_exercises"}, []string{"workout_id", "exercise_id", "position", "sets", "reps", "weight"}, &iteratorForRestoreWorkoutExercises{rows: arg})
 }

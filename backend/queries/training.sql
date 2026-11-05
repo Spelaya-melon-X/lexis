@@ -5,11 +5,16 @@ SELECT EXISTS (SELECT 1 FROM groups WHERE id = $1);
 
 -- name: ListSessionWords :many
 -- Кандидаты в сессию. Обычная: не архив и (новое или due до конца сегодняшнего дня);
--- free: все слова группы. Раскладку по корзинам делает training.Build.
+-- free: все слова группы. Группа — с поддеревом (§18.2); EXISTS, а не JOIN, — чтобы слово
+-- из двух подгрупп пришло один раз. Раскладку по корзинам делает training.Build.
+WITH RECURSIVE sub (id) AS (
+    SELECT @group_id::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
 SELECT w.id, w.term, w.forms, w.translation, w.level, w.next_review_at
 FROM words w
-JOIN word_groups wg ON wg.word_id = w.id
-WHERE wg.group_id = @group_id
+WHERE EXISTS (SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub))
   AND (@free::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < @day_end)));
 
 -- name: ListExamplesByWordIDs :many
@@ -30,7 +35,13 @@ RETURNING id;
 SELECT * FROM training_sessions WHERE id = $1 FOR UPDATE;
 
 -- name: WordInGroup :one
-SELECT EXISTS (SELECT 1 FROM word_groups WHERE word_id = @word_id AND group_id = @group_id);
+-- Слово в группе или любой её подгруппе.
+WITH RECURSIVE sub (id) AS (
+    SELECT @group_id::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
+SELECT EXISTS (SELECT 1 FROM word_groups WHERE word_id = @word_id AND group_id IN (SELECT id FROM sub));
 
 -- name: GetWordSRSForUpdate :one
 SELECT id, level, streak, next_review_at, last_reviewed_at, last_good_at

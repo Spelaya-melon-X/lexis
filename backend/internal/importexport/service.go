@@ -21,7 +21,7 @@ import (
 // Импорт списка слов идёт через те же SaveCards, что и ввод: те же правила §4 и слияние дублей.
 type WordStore interface {
 	List(ctx context.Context, f words.ListFilter) ([]words.Word, error)
-	SaveCards(ctx context.Context, cards []words.Card) (created, merged int, err error)
+	SaveCards(ctx context.Context, cards []words.Card) (words.SaveResult, error)
 }
 
 type Service struct {
@@ -50,8 +50,10 @@ type RestoreCounts struct {
 	Sessions     int `json:"sessions"`
 	Reviews      int `json:"reviews"`
 	Achievements int `json:"achievements"`
-	Days         int `json:"days"`   // 0 и для бэкапа без секции journal (v1)
-	Habits       int `json:"habits"` // то же для секции habits
+	Days         int `json:"days"`     // 0 и для бэкапа без секции journal (v1)
+	Habits       int `json:"habits"`   // то же для секции habits
+	Tasks        int `json:"tasks"`    // то же для секции game (v3)
+	Workouts     int `json:"workouts"` // то же для секции sport (v3)
 }
 
 // Import определяет формат по содержимому (см. DetectFormat) и импортирует.
@@ -79,11 +81,18 @@ func (s *Service) Import(ctx context.Context, data []byte) (ImportResult, error)
 	}
 
 	parsed := words.ParseRows(rows)
-	created, merged, err := s.words.SaveCards(ctx, parsed.Cards)
+	res, err := s.words.SaveCards(ctx, parsed.Cards)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("import: %w", err)
 	}
-	return ImportResult{Kind: "words", Created: created, Merged: merged, Errors: parsed.Errors}, nil
+	raw := make(map[int]string, len(rows)) // ошибкам сохранения — исходный текст строки файла
+	for _, r := range rows {
+		raw[r.Line] = r.Raw
+	}
+	for i, e := range res.Errors {
+		res.Errors[i].Text = raw[e.Line]
+	}
+	return ImportResult{Kind: "words", Created: res.Created, Merged: res.Merged, Errors: words.MergeErrors(parsed.Errors, res.Errors)}, nil
 }
 
 // ExportCSV пишет все слова в формате импорта.
@@ -111,7 +120,7 @@ func (s *Service) ExportBackup(ctx context.Context) (Backup, error) {
 		}
 		b.Groups = make([]BackupGroup, len(groups))
 		for i, g := range groups {
-			b.Groups[i] = BackupGroup{ID: g.ID, Name: g.Name, Color: g.Color, CreatedAt: g.CreatedAt}
+			b.Groups[i] = BackupGroup{ID: g.ID, Name: g.Name, Color: g.Color, ParentID: g.ParentID, CreatedAt: g.CreatedAt}
 		}
 
 		ws, err := q.ListAllWords(ctx)
@@ -189,7 +198,13 @@ func (s *Service) ExportBackup(ctx context.Context) (Backup, error) {
 		if b.Journal, err = exportJournal(ctx, q); err != nil {
 			return err
 		}
-		b.Habits, err = exportHabits(ctx, q)
+		if b.Habits, err = exportHabits(ctx, q); err != nil {
+			return err
+		}
+		if b.Game, err = exportGame(ctx, q); err != nil {
+			return err
+		}
+		b.Sport, err = exportSport(ctx, q)
 		return err
 	})
 	if err != nil {
@@ -222,6 +237,16 @@ func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) 
 				return fmt.Errorf("group %q: %w", g.Name, err)
 			}
 			groupID[g.ID] = id
+		}
+		// Вторым проходом: родитель может стоять в файле позже ребёнка. Дерево уже проверено validateBackup.
+		// new(expr) (Go 1.26+) — указатель на значение выражения, без временной переменной.
+		for _, g := range b.Groups {
+			if g.ParentID == nil {
+				continue
+			}
+			if err := q.SetGroupParent(ctx, store.SetGroupParentParams{ID: groupID[g.ID], ParentID: new(groupID[*g.ParentID])}); err != nil {
+				return fmt.Errorf("group %q parent: %w", g.Name, err)
+			}
 		}
 
 		wordID := make(map[int64]int64, len(b.Words))
@@ -303,6 +328,18 @@ func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) 
 				return fmt.Errorf("habits: %w", err)
 			}
 			c.Habits = len(b.Habits.Habits)
+		}
+		if b.Game != nil {
+			if err := restoreGame(ctx, q, *b.Game); err != nil {
+				return fmt.Errorf("game: %w", err)
+			}
+			c.Tasks = len(b.Game.Tasks)
+		}
+		if b.Sport != nil {
+			if err := restoreSport(ctx, q, *b.Sport); err != nil {
+				return fmt.Errorf("sport: %w", err)
+			}
+			c.Workouts = len(b.Sport.Workouts)
 		}
 		return nil
 	})
@@ -510,10 +547,113 @@ func restoreHabits(ctx context.Context, q *store.Queries, h BackupHabits) error 
 	return nil
 }
 
+func exportGame(ctx context.Context, q *store.Queries) (*BackupGame, error) {
+	out := &BackupGame{Types: []BackupTaskType{}, Columns: []BackupTaskColumn{}, Tasks: []BackupTask{}, Plans: []BackupPlanItem{},
+		Ritual: []string{}, Sessions: []BackupFocusSession{}, Rewards: []BackupReward{}, Ledger: []BackupPoints{}}
+	ts, err := q.ListAllTaskTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("task types: %w", err)
+	}
+	for _, t := range ts {
+		out.Types = append(out.Types, BackupTaskType{ID: t.ID, Name: t.Name, Color: t.Color, Position: t.Position, CreatedAt: t.CreatedAt})
+	}
+	cs, err := q.ListAllTaskColumns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("task columns: %w", err)
+	}
+	for _, c := range cs {
+		out.Columns = append(out.Columns, BackupTaskColumn{ID: c.ID, Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt})
+	}
+	tasks, err := q.ListAllTasks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("tasks: %w", err)
+	}
+	for _, t := range tasks {
+		var deadline *string
+		if t.Deadline != nil {
+			deadline = new(clock.FormatDate(*t.Deadline))
+		}
+		out.Tasks = append(out.Tasks, BackupTask{
+			ID: t.ID, ParentID: t.ParentID, Title: t.Title, Blocks: t.Blocks, Importance: t.Importance, Deadline: deadline, TypeID: t.TypeID,
+			ColumnID: t.ColumnID, Position: t.Position, Note: t.Note, DoneAt: t.DoneAt, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		})
+	}
+	plans, err := q.ListAllPlanItems(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("plans: %w", err)
+	}
+	for _, p := range plans {
+		out.Plans = append(out.Plans, BackupPlanItem{Day: clock.FormatDate(p.Day), TaskID: p.TaskID, Position: p.Position, Blocks: p.Blocks, Start: new(p.StartMin)})
+	}
+	if err := exportFocus(ctx, q, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func restoreGame(ctx context.Context, q *store.Queries, g BackupGame) error {
+	if err := q.TruncateGame(ctx); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	typeID := make(map[int64]int64, len(g.Types)) // id в файле → новый id
+	for _, t := range g.Types {
+		id, err := q.RestoreTaskType(ctx, store.RestoreTaskTypeParams{Name: t.Name, Color: t.Color, Position: t.Position, CreatedAt: t.CreatedAt})
+		if err != nil {
+			return fmt.Errorf("type %q: %w", t.Name, err)
+		}
+		typeID[t.ID] = id
+	}
+	columnID := make(map[int64]int64, len(g.Columns))
+	for _, c := range g.Columns {
+		id, err := q.RestoreTaskColumn(ctx, store.RestoreTaskColumnParams{Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt})
+		if err != nil {
+			return fmt.Errorf("column %q: %w", c.Name, err)
+		}
+		columnID[c.ID] = id
+	}
+	taskID := make(map[int64]int64, len(g.Tasks))
+	for _, t := range g.Tasks {
+		p := store.RestoreTaskParams{
+			Title: t.Title, Blocks: t.Blocks, Importance: t.Importance, ColumnID: columnID[t.ColumnID], Position: t.Position,
+			Note: t.Note, DoneAt: t.DoneAt, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		}
+		if t.Deadline != nil {
+			d, _ := clock.ParseDate(*t.Deadline) // проверено в validateBackup
+			p.Deadline = &d
+		}
+		if t.TypeID != nil {
+			p.TypeID = new(typeID[*t.TypeID])
+		}
+		id, err := q.RestoreTask(ctx, p)
+		if err != nil {
+			return fmt.Errorf("task %q: %w", t.Title, err)
+		}
+		taskID[t.ID] = id
+	}
+	for _, t := range g.Tasks { // вторым проходом: родитель может стоять в файле позже шага
+		if t.ParentID == nil {
+			continue
+		}
+		if err := q.SetTaskParent(ctx, store.SetTaskParentParams{ID: taskID[t.ID], ParentID: new(taskID[*t.ParentID])}); err != nil {
+			return fmt.Errorf("task %q parent: %w", t.Title, err)
+		}
+	}
+	plans := make([]store.RestorePlanItemsParams, len(g.Plans))
+	starts := fillPlanStarts(g.Plans)
+	for i, p := range g.Plans {
+		day, _ := clock.ParseDate(p.Day) // проверено в validateBackup
+		plans[i] = store.RestorePlanItemsParams{Day: day, TaskID: taskID[p.TaskID], Position: p.Position, Blocks: p.Blocks, StartMin: starts[i]}
+	}
+	if _, err := q.RestorePlanItems(ctx, plans); err != nil {
+		return fmt.Errorf("plans: %w", err)
+	}
+	return restoreFocus(ctx, q, g, taskID)
+}
+
 // Что очищает Reset (§17.10). Настройки не трогает ни один вариант.
 const (
 	ScopeEnglish = "english" // слова, группы, история, достижения — «Очистить» в настройках английского
-	ScopeAll     = "all"     // + дневник и привычки — «Очистить всё» в глобальных настройках
+	ScopeAll     = "all"     // + дневник, привычки, игра, спорт — «Очистить всё» в глобальных настройках
 )
 
 // Reset очищает данные в пределах scope одной транзакцией.
@@ -535,10 +675,217 @@ func (s *Service) Reset(ctx context.Context, scope string) error {
 		if err := q.TruncateHabits(ctx); err != nil {
 			return fmt.Errorf("habits: %w", err)
 		}
+		if err := q.TruncateGame(ctx); err != nil {
+			return fmt.Errorf("game: %w", err)
+		}
+		if err := q.TruncateSport(ctx); err != nil {
+			return fmt.Errorf("sport: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("reset %s: %w", scope, err)
+	}
+	return nil
+}
+
+func exportFocus(ctx context.Context, q *store.Queries, out *BackupGame) error {
+	ritual, err := q.ListAllRitual(ctx)
+	if err != nil {
+		return fmt.Errorf("ritual: %w", err)
+	}
+	out.Ritual = append(out.Ritual, ritual...)
+
+	sessions, err := q.ListAllFocusSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("focus sessions: %w", err)
+	}
+	idx := make(map[int64]int, len(sessions))
+	for i, x := range sessions {
+		idx[x.ID] = i
+		out.Sessions = append(out.Sessions, BackupFocusSession{
+			ID: x.ID, TaskID: x.TaskID, TaskTitle: x.TaskTitle, Day: clock.FormatDate(x.Day), PlannedBlocks: x.PlannedBlocks,
+			StartedAt: x.StartedAt, WorkStartedAt: x.WorkStartedAt, FinishedAt: x.FinishedAt, Outcome: x.Outcome,
+			Breaks: []BackupFocusBreak{}, Distractions: []BackupDistraction{},
+		})
+	}
+	breaks, err := q.ListAllFocusBreaks(ctx)
+	if err != nil {
+		return fmt.Errorf("focus breaks: %w", err)
+	}
+	for _, b := range breaks {
+		x := &out.Sessions[idx[b.SessionID]]
+		x.Breaks = append(x.Breaks, BackupFocusBreak{StartedAt: b.StartedAt, EndedAt: b.EndedAt})
+	}
+	ds, err := q.ListAllFocusDistractions(ctx)
+	if err != nil {
+		return fmt.Errorf("focus distractions: %w", err)
+	}
+	for _, d := range ds {
+		x := &out.Sessions[idx[d.SessionID]]
+		x.Distractions = append(x.Distractions, BackupDistraction{At: d.At, Trigger: d.Trigger, GaveIn: d.GaveIn})
+	}
+
+	rewards, err := q.ListAllRewards(ctx)
+	if err != nil {
+		return fmt.Errorf("rewards: %w", err)
+	}
+	for _, r := range rewards {
+		out.Rewards = append(out.Rewards, BackupReward{ID: r.ID, Title: r.Title, Price: r.Price, Position: r.Position, ArchivedAt: r.ArchivedAt, CreatedAt: r.CreatedAt})
+	}
+	points, err := q.ListAllPoints(ctx)
+	if err != nil {
+		return fmt.Errorf("points: %w", err)
+	}
+	for _, p := range points {
+		out.Ledger = append(out.Ledger, BackupPoints{At: p.At, Delta: p.Delta, Kind: p.Kind, Title: p.Title, SessionID: p.FocusSessionID, RewardID: p.RewardID})
+	}
+	return nil
+}
+
+// restoreFocus — после дел (taskID — карта id дел в файле → новые id). Таблицы уже очищены TruncateGame.
+func restoreFocus(ctx context.Context, q *store.Queries, g BackupGame, taskID map[int64]int64) error {
+	ritual := make([]store.RestoreRitualParams, len(g.Ritual))
+	for i, text := range g.Ritual {
+		ritual[i] = store.RestoreRitualParams{Text: text, Position: int32(i)}
+	}
+	if _, err := q.RestoreRitual(ctx, ritual); err != nil {
+		return fmt.Errorf("ritual: %w", err)
+	}
+
+	sessionID := make(map[int64]int64, len(g.Sessions))
+	var breaks []store.RestoreFocusBreaksParams
+	var ds []store.RestoreFocusDistractionsParams
+	for _, x := range g.Sessions {
+		day, _ := clock.ParseDate(x.Day) // проверено в validateBackup
+		p := store.RestoreFocusSessionParams{
+			TaskTitle: x.TaskTitle, Day: day, PlannedBlocks: x.PlannedBlocks, StartedAt: x.StartedAt,
+			WorkStartedAt: x.WorkStartedAt, FinishedAt: x.FinishedAt, Outcome: x.Outcome,
+		}
+		if x.TaskID != nil {
+			p.TaskID = new(taskID[*x.TaskID])
+		}
+		id, err := q.RestoreFocusSession(ctx, p)
+		if err != nil {
+			return fmt.Errorf("focus session %d: %w", x.ID, err)
+		}
+		sessionID[x.ID] = id
+		for _, b := range x.Breaks {
+			breaks = append(breaks, store.RestoreFocusBreaksParams{SessionID: id, StartedAt: b.StartedAt, EndedAt: b.EndedAt})
+		}
+		for _, d := range x.Distractions {
+			ds = append(ds, store.RestoreFocusDistractionsParams{SessionID: id, At: d.At, Trigger: d.Trigger, GaveIn: d.GaveIn})
+		}
+	}
+	if _, err := q.RestoreFocusBreaks(ctx, breaks); err != nil {
+		return fmt.Errorf("focus breaks: %w", err)
+	}
+	if _, err := q.RestoreFocusDistractions(ctx, ds); err != nil {
+		return fmt.Errorf("focus distractions: %w", err)
+	}
+
+	rewardID := make(map[int64]int64, len(g.Rewards))
+	for _, r := range g.Rewards {
+		id, err := q.RestoreReward(ctx, store.RestoreRewardParams{Title: r.Title, Price: r.Price, Position: r.Position, ArchivedAt: r.ArchivedAt, CreatedAt: r.CreatedAt})
+		if err != nil {
+			return fmt.Errorf("reward %q: %w", r.Title, err)
+		}
+		rewardID[r.ID] = id
+	}
+	points := make([]store.RestorePointsParams, len(g.Ledger))
+	for i, p := range g.Ledger {
+		points[i] = store.RestorePointsParams{At: p.At, Delta: p.Delta, Kind: p.Kind, Title: p.Title}
+		if p.SessionID != nil {
+			points[i].FocusSessionID = new(sessionID[*p.SessionID])
+		}
+		if p.RewardID != nil {
+			points[i].RewardID = new(rewardID[*p.RewardID])
+		}
+	}
+	if _, err := q.RestorePoints(ctx, points); err != nil {
+		return fmt.Errorf("points: %w", err)
+	}
+	return nil
+}
+
+func exportSport(ctx context.Context, q *store.Queries) (*BackupSport, error) {
+	out := &BackupSport{Exercises: []BackupExercise{}, Workouts: []BackupWorkout{}, Meals: []BackupMeal{}}
+	exs, err := q.ListAllExercises(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("exercises: %w", err)
+	}
+	for _, e := range exs {
+		out.Exercises = append(out.Exercises, BackupExercise{ID: e.ID, Name: e.Name, CreatedAt: e.CreatedAt})
+	}
+	ws, err := q.ListAllWorkouts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("workouts: %w", err)
+	}
+	idx := make(map[int64]int, len(ws))
+	for i, w := range ws {
+		idx[w.ID] = i
+		out.Workouts = append(out.Workouts, BackupWorkout{
+			Day: clock.FormatDate(w.Day), Title: w.Title, Notes: w.Notes, DurationMin: w.DurationMin, Kcal: w.Kcal,
+			Exercises: []BackupWorkoutEntry{}, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
+		})
+	}
+	entries, err := q.ListAllWorkoutExercises(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("workout exercises: %w", err)
+	}
+	for _, e := range entries { // по (workout_id, position) — порядок внутри тренировки сохраняется
+		w := &out.Workouts[idx[e.WorkoutID]]
+		w.Exercises = append(w.Exercises, BackupWorkoutEntry{ExerciseID: e.ExerciseID, Sets: e.Sets, Reps: e.Reps, Weight: e.Weight})
+	}
+	meals, err := q.ListAllMeals(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("meals: %w", err)
+	}
+	for _, m := range meals {
+		out.Meals = append(out.Meals, BackupMeal{Day: clock.FormatDate(m.Day), Text: m.Text, Kcal: m.Kcal, CreatedAt: m.CreatedAt})
+	}
+	return out, nil
+}
+
+func restoreSport(ctx context.Context, q *store.Queries, sp BackupSport) error {
+	if err := q.TruncateSport(ctx); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+	exerciseID := make(map[int64]int64, len(sp.Exercises))
+	for _, e := range sp.Exercises {
+		id, err := q.RestoreExercise(ctx, store.RestoreExerciseParams{Name: e.Name, CreatedAt: e.CreatedAt})
+		if err != nil {
+			return fmt.Errorf("exercise %q: %w", e.Name, err)
+		}
+		exerciseID[e.ID] = id
+	}
+	var entries []store.RestoreWorkoutExercisesParams
+	for _, w := range sp.Workouts {
+		day, _ := clock.ParseDate(w.Day) // проверено в validateBackup
+		wid, err := q.RestoreWorkout(ctx, store.RestoreWorkoutParams{
+			Day: day, Title: w.Title, Notes: w.Notes, DurationMin: w.DurationMin, Kcal: w.Kcal, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
+		})
+		if err != nil {
+			return fmt.Errorf("workout %q: %w", w.Title, err)
+		}
+		for pos, x := range w.Exercises {
+			entries = append(entries, store.RestoreWorkoutExercisesParams{
+				WorkoutID: wid, ExerciseID: exerciseID[x.ExerciseID], Position: int16(pos), Sets: x.Sets, Reps: x.Reps, Weight: x.Weight,
+			})
+		}
+	}
+	if _, err := q.RestoreWorkoutExercises(ctx, entries); err != nil {
+		return fmt.Errorf("workout exercises: %w", err)
+	}
+	meals := make([]store.RestoreMealsParams, len(sp.Meals))
+	pos := map[string]int16{} // позиция внутри дня — по порядку в файле
+	for i, m := range sp.Meals {
+		day, _ := clock.ParseDate(m.Day) // проверено в validateBackup
+		meals[i] = store.RestoreMealsParams{Day: day, Position: pos[m.Day], Text: m.Text, Kcal: m.Kcal, CreatedAt: m.CreatedAt}
+		pos[m.Day]++
+	}
+	if _, err := q.RestoreMeals(ctx, meals); err != nil {
+		return fmt.Errorf("meals: %w", err)
 	}
 	return nil
 }

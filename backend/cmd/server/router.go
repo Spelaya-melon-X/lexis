@@ -11,6 +11,7 @@ import (
 
 	"lexis/internal/achievements"
 	"lexis/internal/app"
+	"lexis/internal/focus"
 	"lexis/internal/groups"
 	"lexis/internal/habits"
 	"lexis/internal/importexport"
@@ -19,7 +20,9 @@ import (
 	"lexis/internal/platform/eventbus"
 	"lexis/internal/platform/httpx"
 	"lexis/internal/settings"
+	"lexis/internal/sport"
 	"lexis/internal/stats"
+	"lexis/internal/tasks"
 	"lexis/internal/training"
 	"lexis/internal/words"
 	"lexis/web"
@@ -32,6 +35,7 @@ import (
 func modules(pool *pgxpool.Pool, clk clock.Clock, bus *eventbus.Bus) []app.Module {
 	wordsSvc := words.NewService(pool, clk, bus)
 	habitsSvc := habits.NewService(pool, clk)
+	tasksSvc := tasks.NewService(pool, clk, bus)
 	return []app.Module{
 		words.New(pool, clk, bus),
 		groups.New(pool, clk, wordsSvc),
@@ -42,6 +46,9 @@ func modules(pool *pgxpool.Pool, clk clock.Clock, bus *eventbus.Bus) []app.Modul
 		importexport.New(pool, clk, wordsSvc),
 		journal.New(pool, clk, habitsSvc), // сводке недели нужны привычки
 		habits.New(pool, clk),
+		tasks.New(pool, clk, bus),
+		sport.New(pool, clk),
+		focus.New(pool, clk, tasksSvc, journal.NewService(pool, clk, habitsSvc), bus), // дела и дофамин дня — через узкие интерфейсы
 	}
 }
 

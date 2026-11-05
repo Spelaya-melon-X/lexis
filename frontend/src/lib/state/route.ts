@@ -6,6 +6,10 @@ export const SECTIONS = {
   english: ['add', 'groups', 'training', 'stats', 'settings'],
   day: ['entry', 'calendar', 'week', 'stats'],
   habits: ['check', 'calendar', 'goals', 'notes', 'manage'],
+  // «Игра в жизнь» (§18.3): подразделы добавляются по фазам — распорядок (B3), фокус и награды (B4), статистика (B5).
+  game: ['plan', 'board', 'focus', 'shop', 'stats', 'settings'],
+  // «Спорт» (§18.4).
+  sport: ['workouts', 'food', 'exercises', 'stats'],
   // Глобальные настройки (⚙ справа в шапке, не в списке разделов). Старый «#settings» — это
   // настройки английского (v1), он по-прежнему ведёт в #/english/settings.
   settings: ['general', 'data'],

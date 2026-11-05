@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Навигация по дням: ← дата →, «Сегодня», выбор даты. Будущие дни недоступны (§17.2).
+  // Навигация по дням: ← дата →, «Сегодня», выбор даты. max — последний доступный день
+  // (дневник и привычки: сегодня, §17.2); без max можно и в будущее (распорядок дня, §18.3).
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
   import { addDays, isDay, longDay } from '../dates'
@@ -7,12 +8,14 @@
 
   interface Props {
     day: string
-    max: string // сегодня
+    max?: string
+    today?: string // по умолчанию — max
     onchange: (day: string) => void
   }
-  let { day, max, onchange }: Props = $props()
+  let { day, max, today = max, onchange }: Props = $props()
 
-  const isToday = $derived(day === max)
+  const isToday = $derived(day === today)
+  const atMax = $derived(max !== undefined && day >= max)
 </script>
 
 <div class="pager">
@@ -30,17 +33,17 @@
       aria-label={t('date.pickDate')}
       onchange={(e) => {
         const v = e.currentTarget.value
-        if (isDay(v) && v <= max) onchange(v)
+        if (isDay(v) && (max === undefined || v <= max)) onchange(v)
       }}
     />
   </label>
 
-  <button class="arrow" aria-label={t('date.nextDay')} title={t('date.nextDay')} disabled={isToday} onclick={() => onchange(addDays(day, 1))}>
+  <button class="arrow" aria-label={t('date.nextDay')} title={t('date.nextDay')} disabled={atMax} onclick={() => onchange(addDays(day, 1))}>
     <Icon name="chevronRight" />
   </button>
 
-  {#if !isToday}
-    <Button size="sm" variant="ghost" icon="sun" onclick={() => onchange(max)}>{t('date.today')}</Button>
+  {#if !isToday && today}
+    <Button size="sm" variant="ghost" icon="sun" onclick={() => onchange(today)}>{t('date.today')}</Button>
   {/if}
 </div>
 

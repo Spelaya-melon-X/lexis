@@ -110,10 +110,10 @@ func TestService_List(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	want := []Group{
-		{ID: a, Name: "a", WordCount: 4, Due: 2, RepeatedToday: false, Levels: Levels{1, 1, 1, 0, 1}},
+		{ID: a, Name: "a", WordCount: 4, OwnWordCount: 4, Due: 2, RepeatedToday: false, Levels: Levels{1, 1, 1, 0, 1}},
 		{ID: b, Name: "b", WordCount: 0, Due: 0, RepeatedToday: true},
-		{ID: c, Name: "c", WordCount: 2, Due: 2, RepeatedToday: true, Levels: Levels{0, 1, 0, 1, 0}},
-		{ID: d, Name: "d", WordCount: 1, Due: 0, RepeatedToday: true, Levels: Levels{0, 0, 1, 0, 0}},
+		{ID: c, Name: "c", WordCount: 2, OwnWordCount: 2, Due: 2, RepeatedToday: true, Levels: Levels{0, 1, 0, 1, 0}},
+		{ID: d, Name: "d", WordCount: 1, OwnWordCount: 1, Due: 0, RepeatedToday: true, Levels: Levels{0, 0, 1, 0, 0}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d groups: %+v", len(got), got)
@@ -166,7 +166,7 @@ func TestService_Get(t *testing.T) {
 		want, ok := wantShare[p.Day]
 		switch {
 		case ok && (p.GoodShare == nil || *p.GoodShare != want || p.Sessions != 1):
-			t.Errorf("%s: got %d %v, want 1 %v", p.Day, p.Sessions, deref(p.GoodShare), want)
+			t.Errorf("%s: got %d %v, want 1 %v", p.Day, p.Sessions, show(p.GoodShare), want)
 		case !ok && (p.GoodShare != nil || p.Sessions != 0):
 			t.Errorf("%s: want empty, got %+v", p.Day, p)
 		}
@@ -247,7 +247,7 @@ func TestService_Delete(t *testing.T) {
 	w := env.word(t, "a", 2, at(1, 0, 0), g)
 	s := env.session(t, g, tptr(at(4, 9, 0)), 1, 1, false)
 
-	if err := env.svc.Delete(ctx, g); err != nil {
+	if err := env.svc.Delete(ctx, g, ChildrenLift); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if n := env.scalar(t, `SELECT count(*) FROM words WHERE id = $1`, w); n != 1 {
@@ -259,7 +259,7 @@ func TestService_Delete(t *testing.T) {
 	if n := env.scalar(t, `SELECT count(*) FROM training_sessions WHERE id = $1 AND group_id IS NULL`, s); n != 1 {
 		t.Error("session history must survive with group_id = NULL")
 	}
-	assertHTTPError(t, env.svc.Delete(ctx, g), 404, "not_found")
+	assertHTTPError(t, env.svc.Delete(ctx, g, ChildrenLift), 404, "not_found")
 }
 
 // TestModule_HTTP — сквозная проверка роутов и JSON поверх живой БД.

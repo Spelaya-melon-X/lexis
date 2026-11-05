@@ -2,12 +2,17 @@ package importexport
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
+	"lexis/internal/groups/tree"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/httpx"
+	"lexis/internal/sport"
+	tasksmod "lexis/internal/tasks" // tasks — уже имя поля секции; алиас, чтобы не путать
 )
 
 // BackupVersion — версия формата. Меняем при несовместимых изменениях; старые версии
@@ -15,7 +20,9 @@ import (
 //
 // v2 (§17.10) = v1 + необязательные секции journal и habits. Файлы v1 восстанавливаются
 // как есть: новых секций в них нет, и эти разделы при восстановлении не трогаются.
-const BackupVersion = 2
+// v3 (§18.1) = v2 + groups[].parentId (дерево групп) + необязательная секция game.
+// В v1/v2 их нет — все группы корневые, «Игра» при восстановлении не трогается.
+const BackupVersion = 3
 
 // Backup — полный снимок данных (§4: слова, группы, уровни, история).
 // id внутри файла — только для ссылок между сущностями: при восстановлении
@@ -31,6 +38,172 @@ type Backup struct {
 	// nil — секции нет в файле (бэкап v1): эти данные восстановление не трогает.
 	Journal *BackupJournal `json:"journal,omitempty"`
 	Habits  *BackupHabits  `json:"habits,omitempty"`
+	Game    *BackupGame    `json:"game,omitempty"`  // v3
+	Sport   *BackupSport   `json:"sport,omitempty"` // v3, с фазы C1
+}
+
+// BackupSport — раздел «Спорт» (§18.4). id упражнений — только для ссылок внутри файла.
+type BackupSport struct {
+	Exercises []BackupExercise `json:"exercises"`
+	Workouts  []BackupWorkout  `json:"workouts"`
+	Meals     []BackupMeal     `json:"meals"` // C2; в бэкапах C1 ключа нет — пусто
+}
+
+// BackupMeal — пункт еды; порядок внутри дня — порядок в файле.
+type BackupMeal struct {
+	Day       string    `json:"day"`
+	Text      string    `json:"text"`
+	Kcal      *int32    `json:"kcal"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type BackupExercise struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type BackupWorkout struct {
+	Day         string               `json:"day"`
+	Title       string               `json:"title"`
+	Notes       string               `json:"notes"`
+	DurationMin *int32               `json:"durationMin"`
+	Kcal        *int32               `json:"kcal"`
+	Exercises   []BackupWorkoutEntry `json:"exercises"`
+	CreatedAt   time.Time            `json:"createdAt"`
+	UpdatedAt   time.Time            `json:"updatedAt"`
+}
+
+// BackupWorkoutEntry — упражнение тренировки: подходы × повторы × вес (§18.5.7).
+type BackupWorkoutEntry struct {
+	ExerciseID int64    `json:"exerciseId"`
+	Sets       int16    `json:"sets"`
+	Reps       int32    `json:"reps"`
+	Weight     *float64 `json:"weight"`
+}
+
+// BackupGame — раздел «Игра в жизнь» (§18.3). id — только для ссылок внутри файла.
+type BackupGame struct {
+	Types   []BackupTaskType   `json:"types"`
+	Columns []BackupTaskColumn `json:"columns"`
+	Tasks   []BackupTask       `json:"tasks"`
+	Plans   []BackupPlanItem   `json:"plans"` // B3; в бэкапах B1/B2 ключа нет — пусто
+	// B4 — фокус и награды; в бэкапах до B4 ключей нет — пусто.
+	Ritual   []string             `json:"ritual"`
+	Sessions []BackupFocusSession `json:"sessions"`
+	Rewards  []BackupReward       `json:"rewards"`
+	Ledger   []BackupPoints       `json:"ledger"`
+}
+
+type BackupFocusSession struct {
+	ID            int64               `json:"id"`
+	TaskID        *int64              `json:"taskId"`
+	TaskTitle     string              `json:"taskTitle"`
+	Day           string              `json:"day"`
+	PlannedBlocks int16               `json:"plannedBlocks"`
+	StartedAt     time.Time           `json:"startedAt"`
+	WorkStartedAt *time.Time          `json:"workStartedAt"`
+	FinishedAt    *time.Time          `json:"finishedAt"`
+	Outcome       *string             `json:"outcome"`
+	Breaks        []BackupFocusBreak  `json:"breaks"`
+	Distractions  []BackupDistraction `json:"distractions"`
+}
+
+type BackupFocusBreak struct {
+	StartedAt time.Time  `json:"startedAt"`
+	EndedAt   *time.Time `json:"endedAt"`
+}
+
+type BackupDistraction struct {
+	At      time.Time `json:"at"`
+	Trigger string    `json:"trigger"`
+	GaveIn  bool      `json:"gaveIn"`
+}
+
+type BackupReward struct {
+	ID         int64      `json:"id"`
+	Title      string     `json:"title"`
+	Price      int32      `json:"price"`
+	Position   int32      `json:"position"`
+	ArchivedAt *time.Time `json:"archivedAt"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+// BackupPoints — запись журнала очков (в порядке ленты).
+type BackupPoints struct {
+	At        time.Time `json:"at"`
+	Delta     int32     `json:"delta"`
+	Kind      string    `json:"kind"`
+	Title     string    `json:"title"`
+	SessionID *int64    `json:"sessionId"`
+	RewardID  *int64    `json:"rewardId"`
+}
+
+// BackupPlanItem — пункт плана дня. Плоским списком, порядок внутри дня — position.
+type BackupPlanItem struct {
+	Day      string `json:"day"`
+	TaskID   int64  `json:"taskId"`
+	Position int16  `json:"position"`
+	Blocks   int16  `json:"blocks"`
+	Start    *int16 `json:"start"` // минуты от полуночи; в бэкапах первой версии B3 нет — см. fillPlanStarts
+}
+
+// fillPlanStarts — время начала для пунктов из бэкапа без него: как в миграции 0009,
+// подряд от 9:00 в порядке position внутри дня. Пункты со своим временем не трогает.
+func fillPlanStarts(items []BackupPlanItem) []int16 {
+	order := make([]int, len(items))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		return cmp.Or(cmp.Compare(items[a].Day, items[b].Day), cmp.Compare(items[a].Position, items[b].Position))
+	})
+	out := make([]int16, len(items))
+	next := map[string]int16{}
+	for _, i := range order {
+		it := items[i]
+		if it.Start != nil {
+			out[i] = *it.Start
+			continue
+		}
+		if _, ok := next[it.Day]; !ok {
+			next[it.Day] = 540
+		}
+		out[i] = min(next[it.Day], 1410)
+		next[it.Day] += it.Blocks * 30
+	}
+	return out
+}
+
+type BackupTaskType struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Color     *string   `json:"color"`
+	Position  int32     `json:"position"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type BackupTaskColumn struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Position  int32     `json:"position"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type BackupTask struct {
+	ID         int64      `json:"id"`
+	ParentID   *int64     `json:"parentId"` // шаг дела (B2); null — корень
+	Title      string     `json:"title"`
+	Blocks     int16      `json:"blocks"`
+	Importance int16      `json:"importance"`
+	Deadline   *string    `json:"deadline"` // YYYY-MM-DD
+	TypeID     *int64     `json:"typeId"`
+	ColumnID   int64      `json:"columnId"`
+	Position   int32      `json:"position"`
+	Note       string     `json:"note"`
+	DoneAt     *time.Time `json:"doneAt"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
 }
 
 // BackupHabits — раздел «Привычки». id привычек — только для ссылок внутри файла.
@@ -119,6 +292,7 @@ type BackupGroup struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	Color     *string   `json:"color"`
+	ParentID  *int64    `json:"parentId"` // id в файле; null — корень (v3)
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -193,11 +367,27 @@ func validateBackup(b Backup) error {
 	}
 
 	groups := make(map[int64]bool, len(b.Groups))
+	nodes := make([]tree.Node, 0, len(b.Groups))
 	for _, g := range b.Groups {
 		if groups[g.ID] {
 			return bad("duplicate group id %d", g.ID)
 		}
 		groups[g.ID] = true
+		if g.ParentID != nil {
+			if b.Version < 3 {
+				return bad("version %d backup cannot contain nested groups", b.Version)
+			}
+			// 0 в tree значит «корень» — такой id в файле был бы висячей ссылкой, а не корнем.
+			if *g.ParentID == 0 {
+				return bad("group %d refers to unknown parent 0", g.ID)
+			}
+			nodes = append(nodes, tree.Node{ID: g.ID, Name: g.Name, Parent: *g.ParentID})
+		} else {
+			nodes = append(nodes, tree.Node{ID: g.ID, Name: g.Name})
+		}
+	}
+	if err := tree.New(nodes).Validate(); err != nil {
+		return bad("group tree: %v", err)
 	}
 	wordIDs := make(map[int64]bool, len(b.Words))
 	for _, w := range b.Words {
@@ -250,8 +440,133 @@ func validateBackup(b Backup) error {
 			weeks[w.WeekStart] = true
 		}
 	}
+	if b.Game != nil {
+		if b.Version < 3 {
+			return bad("version %d backup cannot contain game", b.Version)
+		}
+		if err := validateGame(*b.Game, bad); err != nil {
+			return err
+		}
+	}
+	if b.Sport != nil {
+		if b.Version < 3 {
+			return bad("version %d backup cannot contain sport", b.Version)
+		}
+		if err := validateSport(*b.Sport, bad); err != nil {
+			return err
+		}
+	}
 	if b.Habits != nil {
 		return validateHabits(*b.Habits, bad)
+	}
+	return nil
+}
+
+// validateSport — ссылки, даты и строки упражнений (теми же правилами, что и API).
+func validateSport(sp BackupSport, bad func(string, ...any) error) error {
+	names := make(map[int64]string, len(sp.Exercises))
+	for _, e := range sp.Exercises {
+		if _, dup := names[e.ID]; dup {
+			return bad("duplicate exercise id %d", e.ID)
+		}
+		names[e.ID] = e.Name
+	}
+	for i, w := range sp.Workouts {
+		if _, err := clock.ParseDate(w.Day); err != nil {
+			return bad("workout %d: invalid day %q", i, w.Day)
+		}
+		for _, x := range w.Exercises {
+			name, ok := names[x.ExerciseID]
+			if !ok {
+				return bad("workout %d refers to unknown exercise %d", i, x.ExerciseID)
+			}
+			if _, err := (sport.EntryInput{Name: name, Sets: int(x.Sets), Reps: int(x.Reps), Weight: x.Weight}).Normalize(); err != nil {
+				return bad("workout %d: invalid entry of exercise %d", i, x.ExerciseID)
+			}
+		}
+	}
+	for i, m := range sp.Meals {
+		if _, err := clock.ParseDate(m.Day); err != nil {
+			return bad("meal %d: invalid day %q", i, m.Day)
+		}
+	}
+	return nil
+}
+
+// validateGame — ссылки и даты секции game (значения полей проверяют CHECK-и схемы).
+func validateGame(g BackupGame, bad func(string, ...any) error) error {
+	types := make(map[int64]bool, len(g.Types))
+	for _, t := range g.Types {
+		if types[t.ID] {
+			return bad("duplicate task type id %d", t.ID)
+		}
+		types[t.ID] = true
+	}
+	columns := make(map[int64]bool, len(g.Columns))
+	for _, c := range g.Columns {
+		if columns[c.ID] {
+			return bad("duplicate column id %d", c.ID)
+		}
+		columns[c.ID] = true
+	}
+	tasks := make(map[int64]bool, len(g.Tasks))
+	nodes := make([]tasksmod.Node, 0, len(g.Tasks))
+	for _, t := range g.Tasks {
+		if tasks[t.ID] {
+			return bad("duplicate task id %d", t.ID)
+		}
+		tasks[t.ID] = true
+		if !columns[t.ColumnID] {
+			return bad("task %d refers to unknown column %d", t.ID, t.ColumnID)
+		}
+		if t.TypeID != nil && !types[*t.TypeID] {
+			return bad("task %d refers to unknown type %d", t.ID, *t.TypeID)
+		}
+		if t.Deadline != nil {
+			if _, err := clock.ParseDate(*t.Deadline); err != nil {
+				return bad("task %d: invalid deadline %q", t.ID, *t.Deadline)
+			}
+		}
+		n := tasksmod.Node{ID: t.ID}
+		if t.ParentID != nil {
+			if *t.ParentID == 0 {
+				return bad("task %d refers to unknown parent 0", t.ID) // 0 в Rollup — «корень»
+			}
+			n.Parent = *t.ParentID
+		}
+		nodes = append(nodes, n)
+	}
+	for _, t := range g.Tasks {
+		if t.ParentID != nil && !tasks[*t.ParentID] {
+			return bad("task %d refers to unknown parent %d", t.ID, *t.ParentID)
+		}
+	}
+	planned := make(map[string]bool, len(g.Plans))
+	for _, p := range g.Plans {
+		if _, err := clock.ParseDate(p.Day); err != nil {
+			return bad("invalid plan day %q", p.Day)
+		}
+		if !tasks[p.TaskID] {
+			return bad("plan item refers to unknown task %d", p.TaskID)
+		}
+		key := fmt.Sprintf("%s/%d", p.Day, p.TaskID)
+		if planned[key] {
+			return bad("duplicate plan item %s", key)
+		}
+		planned[key] = true
+	}
+	if err := validateFocus(g, tasks, bad); err != nil {
+		return err
+	}
+	// Rollup не доходит до узлов на цикле (у них нет корня) — по размеру результата его и видно.
+	agg := tasksmod.Rollup(nodes)
+	if len(agg) != len(nodes) {
+		return bad("task tree has a cycle")
+	}
+	for id, a := range agg {
+		if a.Depth > tasksmod.MaxDepth {
+			return bad("task %d is nested deeper than %d levels", id, tasksmod.MaxDepth)
+		}
 	}
 	return nil
 }
@@ -305,6 +620,47 @@ func validateHabits(h BackupHabits, bad func(string, ...any) error) error {
 	for _, n := range h.Notes {
 		if err := ref("note", n.HabitID); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateFocus — ссылки секции game, добавленные в B4: сессии → дела, журнал → сессии/награды.
+// Значения (длины, CHECK исхода, одна незавершённая сессия) проверяют ограничения схемы.
+func validateFocus(g BackupGame, tasks map[int64]bool, bad func(string, ...any) error) error {
+	sessions := make(map[int64]bool, len(g.Sessions))
+	for _, x := range g.Sessions {
+		if sessions[x.ID] {
+			return bad("duplicate focus session id %d", x.ID)
+		}
+		sessions[x.ID] = true
+		if x.TaskID != nil && !tasks[*x.TaskID] {
+			return bad("focus session %d refers to unknown task %d", x.ID, *x.TaskID)
+		}
+		if _, err := clock.ParseDate(x.Day); err != nil {
+			return bad("focus session %d: invalid day %q", x.ID, x.Day)
+		}
+	}
+	rewards := make(map[int64]bool, len(g.Rewards))
+	for _, r := range g.Rewards {
+		if rewards[r.ID] {
+			return bad("duplicate reward id %d", r.ID)
+		}
+		rewards[r.ID] = true
+	}
+	credited := make(map[int64]bool) // начисление за сессию — одно (UNIQUE в схеме)
+	for _, p := range g.Ledger {
+		if p.SessionID != nil {
+			if !sessions[*p.SessionID] {
+				return bad("points refer to unknown focus session %d", *p.SessionID)
+			}
+			if credited[*p.SessionID] {
+				return bad("focus session %d is credited twice", *p.SessionID)
+			}
+			credited[*p.SessionID] = true
+		}
+		if p.RewardID != nil && !rewards[*p.RewardID] {
+			return bad("points refer to unknown reward %d", *p.RewardID)
 		}
 	}
 	return nil

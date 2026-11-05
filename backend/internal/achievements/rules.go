@@ -15,6 +15,14 @@ const (
 	Learned100         Code = "learned_100"
 	Learned500         Code = "learned_500"
 	FirstArchivedGroup Code = "first_archived_group"
+
+	// «Игра в жизнь» (§18.3, B5): за всё время. Префикс game_ — фронт показывает их в статистике игры.
+	GameTasks10  Code = "game_tasks_10"
+	GameTasks50  Code = "game_tasks_50"
+	GameTasks200 Code = "game_tasks_200"
+	GameHours10  Code = "game_hours_10"
+	GameHours50  Code = "game_hours_50"
+	GameHours200 Code = "game_hours_200"
 )
 
 // Snapshot — всё, от чего зависят достижения.
@@ -23,6 +31,8 @@ type Snapshot struct {
 	BestStreak     int // лучшая серия дней — не текущая: однажды достигнутое не «отзывается»
 	Learned        int // слов на уровне ≥ 4 («Мастер» + «Архив»)
 	ArchivedGroups int // непустых групп, где все слова в «Архиве»
+	TasksDone      int // выполненных дел-листьев «Игры»
+	FocusHours     int // полных часов чистой работы в фокусе
 }
 
 type rule struct {
@@ -31,10 +41,12 @@ type rule struct {
 	metric func(Snapshot) int
 }
 
-func sessions(s Snapshot) int { return s.Sessions }
-func streak(s Snapshot) int   { return s.BestStreak }
-func learned(s Snapshot) int  { return s.Learned }
-func archived(s Snapshot) int { return s.ArchivedGroups }
+func sessions(s Snapshot) int   { return s.Sessions }
+func streak(s Snapshot) int     { return s.BestStreak }
+func learned(s Snapshot) int    { return s.Learned }
+func archived(s Snapshot) int   { return s.ArchivedGroups }
+func tasksDone(s Snapshot) int  { return s.TasksDone }
+func focusHours(s Snapshot) int { return s.FocusHours }
 
 // rules — порядок = порядок показа в UI.
 var rules = []rule{
@@ -47,6 +59,12 @@ var rules = []rule{
 	{Learned100, 100, learned},
 	{Learned500, 500, learned},
 	{FirstArchivedGroup, 1, archived},
+	{GameTasks10, 10, tasksDone},
+	{GameTasks50, 50, tasksDone},
+	{GameTasks200, 200, tasksDone},
+	{GameHours10, 10, focusHours},
+	{GameHours50, 50, focusHours},
+	{GameHours200, 200, focusHours},
 }
 
 // Progress — состояние одного достижения по снимку.

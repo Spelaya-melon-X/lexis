@@ -261,13 +261,36 @@ func TestParseTags(t *testing.T) {
 		{"multiple hashes stripped", "##food", []string{"food"}},
 		{"underscore kept inside tag", "#3_формы_глагола", []string{"3_формы_глагола"}},
 		{"empty", "   ", nil},
+		{"path", "#Travel/Airport #food", []string{"travel/airport", "food"}},
+		{"max depth path", "#a/b/c", []string{"a/b/c"}},
+		{"same path twice", "#a/b a/B", []string{"a/b"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := parseTags(tt.in); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %q, want %q", got, tt.want)
+			got, code := parseTags(tt.in)
+			if code != "" || !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %q %q, want %q", got, code, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseTags_InvalidPath(t *testing.T) {
+	for _, in := range []string{"#a//b", "#a/", "#/a", "#a/b/c/d", "#a/a", "#a/b/a", "#ok #x//y"} {
+		if got, code := parseTags(in); code != CodeInvalidGroupPath {
+			t.Errorf("%q: got %q %q, want %q", in, got, code, CodeInvalidGroupPath)
+		}
+	}
+}
+
+func TestParse_InvalidGroupPathIsLineError(t *testing.T) {
+	got := Parse("apple || яблоко || || #food//fruit\nbread || хлеб || || #food/bakery")
+	wantErr := []LineError{{Line: 1, Text: "apple || яблоко || || #food//fruit", Code: CodeInvalidGroupPath}}
+	if !reflect.DeepEqual(got.Errors, wantErr) {
+		t.Errorf("errors = %+v, want %+v", got.Errors, wantErr)
+	}
+	if len(got.Cards) != 1 || !reflect.DeepEqual(got.Cards[0].Groups, []string{"food/bakery"}) {
+		t.Errorf("cards = %+v", got.Cards)
 	}
 }
 
@@ -299,6 +322,7 @@ func TestNormalizeGroupName(t *testing.T) {
 		{" # ", "", false},
 		{"food verbs", "food verbs", false},
 		{"food,verbs", "food,verbs", false},
+		{"travel/airport", "travel/airport", false}, // "/" — разделитель пути, не часть имени
 	}
 	for _, tt := range tests {
 		got, ok := NormalizeGroupName(tt.in)
@@ -336,7 +360,7 @@ func TestParseRows(t *testing.T) {
 }
 
 func TestParseTags_Semicolon(t *testing.T) {
-	if got := parseTags("food;nouns ; #verbs"); !reflect.DeepEqual(got, []string{"food", "nouns", "verbs"}) {
+	if got, _ := parseTags("food;nouns ; #verbs"); !reflect.DeepEqual(got, []string{"food", "nouns", "verbs"}) {
 		t.Errorf("got %q", got)
 	}
 }

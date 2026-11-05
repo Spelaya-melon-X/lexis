@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"lexis/internal/groups/tree"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/db"
 	"lexis/internal/platform/eventbus"
@@ -55,52 +57,81 @@ type BulkResult struct {
 
 // Bulk парсит текст и сохраняет все валидные карточки одной транзакцией:
 // либо записан весь пакет, либо ничего (битые строки транзакцию не роняют —
-// их отсеял парсер, они просто возвращаются в Errors).
+// их отсеял парсер или сервис, они просто возвращаются в Errors).
 func (s *Service) Bulk(ctx context.Context, text string) (BulkResult, error) {
 	parsed := Parse(text)
-	created, merged, err := s.SaveCards(ctx, parsed.Cards)
+	res, err := s.SaveCards(ctx, parsed.Cards)
 	if err != nil {
 		return BulkResult{}, fmt.Errorf("words bulk: %w", err)
 	}
-	return BulkResult{Created: created, Merged: merged, Errors: parsed.Errors}, nil
+	lines := strings.Split(text, "\n")
+	for i, e := range res.Errors {
+		res.Errors[i].Text = strings.TrimSpace(lines[e.Line-1])
+	}
+	return BulkResult{Created: res.Created, Merged: res.Merged, Errors: MergeErrors(parsed.Errors, res.Errors)}, nil
+}
+
+// SaveResult — итог SaveCards. Errors — карточки, которые не сохранены из-за групп
+// (конфликт пути, глубина): Line и Code заполнены, Text — нет: исходник строки есть
+// только у вызывающего (textarea, файл импорта).
+type SaveResult struct {
+	Created, Merged int
+	Errors          []LineError
 }
 
 // SaveCards сохраняет уже разобранные карточки (Parse / ParseRows) одной транзакцией,
 // сливая с существующими словами. Используется и вводом, и импортом CSV/JSON.
-func (s *Service) SaveCards(ctx context.Context, cards []Card) (created, merged int, err error) {
+func (s *Service) SaveCards(ctx context.Context, cards []Card) (SaveResult, error) {
+	res := SaveResult{Errors: []LineError{}}
 	if len(cards) == 0 {
-		return 0, 0, nil
+		return res, nil
 	}
 	now := s.clock.Now()
-	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		groups := newGroupResolver(q, now)
 		for _, c := range cards {
+			// Группы — до слова: карточка с конфликтом пути не должна оставить слово без групп.
+			gids, code, err := groups.resolve(ctx, c.Groups)
+			if err != nil {
+				return err
+			}
+			if code != "" {
+				res.Errors = append(res.Errors, LineError{Line: c.Line, Code: code})
+				continue
+			}
 			id, isNew, err := upsertWord(ctx, q, c, now)
 			if err != nil {
 				return err
 			}
 			if isNew {
-				created++
+				res.Created++
 			} else {
-				merged++
+				res.Merged++
 			}
 			if err := appendExamples(ctx, q, id, c.Examples); err != nil {
 				return err
 			}
-			if err := groups.attach(ctx, id, c.Groups); err != nil {
+			if err := attachGroups(ctx, q, id, gids); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("save cards: %w", err)
+		return SaveResult{}, fmt.Errorf("save cards: %w", err)
 	}
 
 	// Публикуем после коммита: подписчики не должны увидеть слова, которых в итоге нет.
-	s.bus.Publish(eventbus.WordsAdded{Created: created, Merged: merged, At: now})
-	return created, merged, nil
+	s.bus.Publish(eventbus.WordsAdded{Created: res.Created, Merged: res.Merged, At: now})
+	return res, nil
+}
+
+// MergeErrors — ошибки разбора и сохранения одним списком по номеру строки.
+func MergeErrors(parsed, saved []LineError) []LineError {
+	all := append(slices.Clone(parsed), saved...)
+	slices.SortStableFunc(all, func(a, b LineError) int { return a.Line - b.Line })
+	return all
 }
 
 // upsertWord создаёт слово или находит существующий дубликат (§4).
@@ -147,55 +178,115 @@ func appendExamples(ctx context.Context, q *store.Queries, wordID int64, example
 	return nil
 }
 
-// groupResolver — get-or-create групп с кэшем на время одной транзакции:
-// в bulk одна и та же группа обычно встречается у десятков слов.
+// groupResolver находит или создаёт группы по тегам карточек (§18.2) в одной транзакции.
+// Дерево групп (десятки строк) грузится один раз под advisory-блокировкой и дальше
+// живёт в памяти: в bulk одни и те же группы встречаются у десятков слов.
 type groupResolver struct {
-	q   *store.Queries
-	now time.Time
-	ids map[string]int64
+	q    *store.Queries
+	now  time.Time
+	tree *tree.Tree // nil — ещё не загружено
 }
 
 func newGroupResolver(q *store.Queries, now time.Time) *groupResolver {
-	return &groupResolver{q: q, now: now, ids: make(map[string]int64)}
+	return &groupResolver{q: q, now: now}
 }
 
-func (g *groupResolver) id(ctx context.Context, name string) (int64, error) {
-	if id, ok := g.ids[name]; ok {
-		return id, nil
+func (g *groupResolver) load(ctx context.Context) error {
+	if g.tree != nil {
+		return nil
 	}
-	id, err := g.q.InsertGroup(ctx, store.InsertGroupParams{Name: name, Now: g.now})
-	if errors.Is(err, pgx.ErrNoRows) { // уже есть
-		id, err = g.q.GetGroupIDByName(ctx, name)
+	if err := g.q.LockTree(ctx, tree.LockKey); err != nil {
+		return fmt.Errorf("lock group tree: %w", err)
 	}
+	rows, err := g.q.ListGroupNodes(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("group %q: %w", name, err)
+		return fmt.Errorf("list group nodes: %w", err)
 	}
-	g.ids[name] = id
-	return id, nil
+	nodes := make([]tree.Node, len(rows))
+	for i, r := range rows {
+		nodes[i] = tree.Node{ID: r.ID, Name: r.Name, Parent: deref(r.ParentID)}
+	}
+	g.tree = tree.New(nodes)
+	return nil
 }
 
-func (g *groupResolver) attach(ctx context.Context, wordID int64, names []string) error {
-	for _, name := range names {
-		gid, err := g.id(ctx, name)
-		if err != nil {
-			return err
+// resolve возвращает id групп для тегов карточки (для пути — id последней части),
+// создавая недостающие. Сначала проверяет все пути (tree.CheckPaths), потом создаёт:
+// карточка с ошибкой не оставляет за собой пустых групп.
+func (g *groupResolver) resolve(ctx context.Context, tags []string) ([]int64, ErrorCode, error) {
+	if len(tags) == 0 {
+		return nil, "", nil
+	}
+	if err := g.load(ctx); err != nil {
+		return nil, "", err
+	}
+	paths := make([][]string, len(tags))
+	for i, tag := range tags {
+		paths[i] = SplitGroupPath(tag)
+	}
+	switch err := g.tree.CheckPaths(paths); {
+	case errors.Is(err, tree.ErrPathConflict):
+		return nil, CodeGroupPathConflict, nil
+	case errors.Is(err, tree.ErrTooDeep):
+		return nil, CodeGroupTooDeep, nil
+	case err != nil:
+		return nil, "", fmt.Errorf("check group paths: %w", err)
+	}
+
+	ids := make([]int64, 0, len(paths))
+	for _, path := range paths {
+		var parent int64
+		for _, name := range path {
+			id, ok := g.tree.ByName(name)
+			if !ok {
+				var err error
+				id, err = g.q.InsertGroup(ctx, store.InsertGroupParams{Name: name, ParentID: ptrOrNil(parent), Now: g.now})
+				if err != nil {
+					return nil, "", fmt.Errorf("insert group %q: %w", name, err)
+				}
+				g.tree.Add(tree.Node{ID: id, Name: name, Parent: parent})
+			}
+			parent = id
 		}
-		if err := g.q.AddWordGroup(ctx, store.AddWordGroupParams{WordID: wordID, GroupID: gid}); err != nil {
+		ids = append(ids, parent)
+	}
+	return ids, "", nil
+}
+
+func attachGroups(ctx context.Context, q *store.Queries, wordID int64, groupIDs []int64) error {
+	for _, gid := range groupIDs {
+		if err := q.AddWordGroup(ctx, store.AddWordGroupParams{WordID: wordID, GroupID: gid}); err != nil {
 			return fmt.Errorf("add word group: %w", err)
 		}
 	}
 	return nil
 }
 
+// deref / ptrOrNil — мост между parent_id (NULL = корень) и tree (0 = корень).
+func deref(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func ptrOrNil(id int64) *int64 {
+	if id == 0 {
+		return nil
+	}
+	return &id
+}
+
 // ListFilter — необязательные фильтры GET /api/words; nil — без фильтра.
 type ListFilter struct {
 	Level   *int16
 	GroupID *int64
+	Subtree bool // с GroupID: слова группы и всех подгрупп (§18.2)
 }
 
 func (s *Service) List(ctx context.Context, f ListFilter) ([]Word, error) {
 	q := store.New(s.pool)
-	rows, err := q.ListWords(ctx, store.ListWordsParams{Level: f.Level, GroupID: f.GroupID})
+	rows, err := q.ListWords(ctx, store.ListWordsParams{Level: f.Level, GroupID: f.GroupID, Subtree: f.Subtree})
 	if err != nil {
 		return nil, fmt.Errorf("words list: %w", err)
 	}
@@ -327,7 +418,14 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Word, e
 			if err := q.DeleteWordGroups(ctx, id); err != nil {
 				return fmt.Errorf("delete word groups: %w", err)
 			}
-			if err := newGroupResolver(q, now).attach(ctx, id, upd.groups); err != nil {
+			gids, code, err := newGroupResolver(q, now).resolve(ctx, upd.groups)
+			if err != nil {
+				return err
+			}
+			if code != "" {
+				return badField(code)
+			}
+			if err := attachGroups(ctx, q, id, gids); err != nil {
 				return err
 			}
 		}
@@ -382,7 +480,11 @@ func validateUpdate(p UpdateParams) (validatedUpdate, error) {
 	}
 	if p.Groups != nil {
 		// Через parseTags, чтобы "#Food" и "food, verbs" нормализовались ровно как во вводе.
-		v.groups = nonNil(parseTags(strings.Join(*p.Groups, " ")))
+		groups, code := parseTags(strings.Join(*p.Groups, " "))
+		if code != "" {
+			return v, badField(code)
+		}
+		v.groups = nonNil(groups)
 	}
 	return v, nil
 }

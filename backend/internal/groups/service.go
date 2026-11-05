@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lexis/internal/groups/store"
+	"lexis/internal/groups/tree"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/db"
 	"lexis/internal/platform/httpx"
@@ -37,13 +38,16 @@ func NewService(pool *pgxpool.Pool, clk clock.Clock, wl WordLister) *Service {
 }
 
 // Group — группа в списке: статус дня, due и распределение по уровням.
+// Счётчики — по поддереву (сама группа + подгруппы, слова уникально, §18.2).
 type Group struct {
 	ID            int64     `json:"id"`
 	Name          string    `json:"name"`
 	Color         *string   `json:"color"`
+	ParentID      *int64    `json:"parentId"` // null — корень
 	CreatedAt     time.Time `json:"createdAt"`
 	WordCount     int       `json:"wordCount"`
-	Due           int       `json:"due"` // карточки на сегодня, включая новые (§6)
+	OwnWordCount  int       `json:"ownWordCount"` // слова, привязанные к самой группе
+	Due           int       `json:"due"`          // карточки на сегодня, включая новые (§6)
 	RepeatedToday bool      `json:"repeatedToday"`
 	Levels        Levels    `json:"levels"` // [ур.1, …, ур.5]
 }
@@ -82,8 +86,10 @@ func (s *Service) summaries(ctx context.Context, q *store.Queries, id *int64) ([
 			ID:            r.ID,
 			Name:          r.Name,
 			Color:         r.Color,
+			ParentID:      r.ParentID,
 			CreatedAt:     r.CreatedAt,
 			WordCount:     int(r.Words),
+			OwnWordCount:  int(r.OwnWords),
 			Due:           int(r.Due),
 			RepeatedToday: RepeatedToday(r.TrainedToday, int(r.Due)),
 			Levels:        Levels{int(r.Level1), int(r.Level2), int(r.Level3), int(r.Level4), int(r.Level5)},
@@ -103,7 +109,7 @@ func (s *Service) summary(ctx context.Context, q *store.Queries, id int64) (Grou
 	return groups[0], nil
 }
 
-// Get — группа + аналитика (§5) + её слова.
+// Get — группа + аналитика (§5) + слова, всё по поддереву.
 func (s *Service) Get(ctx context.Context, id int64, r Range) (Detail, error) {
 	days, ok := r.Days()
 	if !ok {
@@ -136,7 +142,7 @@ func (s *Service) Get(ctx context.Context, id int64, r Range) (Detail, error) {
 		stats[i] = SessionStat{FinishedAt: row.FinishedAt, Total: int(row.Total), Good: int(row.Good)}
 	}
 
-	ws, err := s.words.List(ctx, words.ListFilter{GroupID: &id})
+	ws, err := s.words.List(ctx, words.ListFilter{GroupID: &id, Subtree: true})
 	if err != nil {
 		return Detail{}, fmt.Errorf("groups get: %w", err)
 	}
@@ -176,10 +182,57 @@ func (o *OptionalString) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// CreateParams — тело POST /api/groups: пустая группа (папка), в т.ч. сразу внутри другой.
+type CreateParams struct {
+	Name     string  `json:"name"`
+	ParentID *int64  `json:"parentId"`
+	Color    *string `json:"color"`
+}
+
+func (s *Service) Create(ctx context.Context, p CreateParams) (Group, error) {
+	name, err := normalizeName(p.Name)
+	if err != nil {
+		return Group{}, err
+	}
+	color, err := normalizeColor(p.Color)
+	if err != nil {
+		return Group{}, err
+	}
+	var g Group
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		t, err := loadTree(ctx, q)
+		if err != nil {
+			return err
+		}
+		parent, err := parentOf(p.ParentID)
+		if err != nil {
+			return err
+		}
+		if err := treeError(t.CheckNew(parent)); err != nil {
+			return err
+		}
+		id, err := q.InsertGroup(ctx, store.InsertGroupParams{Name: name, ParentID: p.ParentID, Color: color, Now: s.clock.Now()})
+		if err != nil {
+			if db.IsUniqueViolation(err) {
+				return httpx.Conflict("duplicate_group", "group with this name already exists")
+			}
+			return fmt.Errorf("insert group: %w", err)
+		}
+		g, err = s.summary(ctx, q, id)
+		return err
+	})
+	if err != nil {
+		return Group{}, fmt.Errorf("groups create: %w", err)
+	}
+	return g, nil
+}
+
 // UpdateParams — тело PATCH /api/groups/:id.
 type UpdateParams struct {
-	Name  *string        `json:"name"`
-	Color OptionalString `json:"color"` // "#RRGGBB" или null
+	Name     *string               `json:"name"`
+	Color    OptionalString        `json:"color"`    // "#RRGGBB" или null
+	ParentID httpx.Optional[int64] `json:"parentId"` // id или null — в корень
 }
 
 var colorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -187,24 +240,26 @@ var colorRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Group, error) {
 	var name *string
 	if p.Name != nil {
-		n, ok := words.NormalizeGroupName(*p.Name)
-		if !ok {
-			return Group{}, httpx.BadRequest("invalid_group_name", "group name must be a single tag")
+		n, err := normalizeName(*p.Name)
+		if err != nil {
+			return Group{}, err
 		}
 		name = &n
 	}
-	var color *string
-	if p.Color.Value != nil {
-		if !colorRe.MatchString(*p.Color.Value) {
-			return Group{}, httpx.BadRequest("invalid_color", "color must be #RRGGBB")
-		}
-		c := strings.ToLower(*p.Color.Value)
-		color = &c
+	color, err := normalizeColor(p.Color.Value)
+	if err != nil {
+		return Group{}, err
 	}
 
 	var g Group
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
+		// Блокируем дерево при любой правке: переименование тоже может столкнуться
+		// с созданием группы по пути из тега в параллельном bulk.
+		t, err := loadTree(ctx, q)
+		if err != nil {
+			return err
+		}
 		cur, err := q.GetGroup(ctx, id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("group not found")
@@ -212,12 +267,22 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Group, 
 		if err != nil {
 			return fmt.Errorf("get group: %w", err)
 		}
-		params := store.UpdateGroupParams{ID: id, Name: cur.Name, Color: cur.Color}
+		params := store.UpdateGroupParams{ID: id, Name: cur.Name, Color: cur.Color, ParentID: cur.ParentID}
 		if name != nil {
 			params.Name = *name
 		}
 		if p.Color.Set {
 			params.Color = color // nil при null — очистить
+		}
+		if p.ParentID.Set {
+			parent, err := parentOf(p.ParentID.Value)
+			if err != nil {
+				return err
+			}
+			if err := treeError(t.CheckMove(id, parent)); err != nil {
+				return err
+			}
+			params.ParentID = p.ParentID.Value
 		}
 		if _, err := q.UpdateGroup(ctx, params); err != nil {
 			if db.IsUniqueViolation(err) {
@@ -234,14 +299,118 @@ func (s *Service) Update(ctx context.Context, id int64, p UpdateParams) (Group, 
 	return g, nil
 }
 
-// Delete удаляет группу. Слова остаются (связи — каскадом), история сессий тоже (group_id → NULL).
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	n, err := store.New(s.pool).DeleteGroup(ctx, id)
+// Children — что делать с подгруппами при удалении (§18.2).
+type Children string
+
+const (
+	ChildrenLift   Children = "lift"   // поднять на уровень удаляемой группы
+	ChildrenDelete Children = "delete" // удалить всё поддерево
+)
+
+// Delete удаляет группу (и, если просили, подгруппы). Слова остаются (связи — каскадом),
+// история сессий тоже (group_id → NULL).
+func (s *Service) Delete(ctx context.Context, id int64, children Children) error {
+	if children != ChildrenLift && children != ChildrenDelete {
+		return httpx.BadRequest("invalid_children", "children must be lift or delete")
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		t, err := loadTree(ctx, q)
+		if err != nil {
+			return err
+		}
+		if !t.Has(id) {
+			return httpx.NotFound("group not found")
+		}
+		ids := t.Subtree(id)
+		if children == ChildrenLift {
+			// Подъём только уменьшает глубину — проверять дерево не нужно.
+			if err := q.LiftChildren(ctx, store.LiftChildrenParams{ID: id, NewParent: ptrOrNil(t.Parent(id))}); err != nil {
+				return fmt.Errorf("lift children: %w", err)
+			}
+			ids = []int64{id}
+		}
+		if _, err := q.DeleteGroups(ctx, ids); err != nil {
+			return fmt.Errorf("delete groups: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("groups delete: %w", err)
 	}
-	if n == 0 {
-		return httpx.NotFound("group not found")
-	}
 	return nil
+}
+
+// loadTree блокирует дерево до конца транзакции и читает его целиком (групп — десятки).
+func loadTree(ctx context.Context, q *store.Queries) (*tree.Tree, error) {
+	if err := q.LockTree(ctx, tree.LockKey); err != nil {
+		return nil, fmt.Errorf("lock group tree: %w", err)
+	}
+	rows, err := q.ListGroupNodes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list group nodes: %w", err)
+	}
+	nodes := make([]tree.Node, len(rows))
+	for i, r := range rows {
+		nodes[i] = tree.Node{ID: r.ID, Name: r.Name, Parent: deref(r.ParentID)}
+	}
+	return tree.New(nodes), nil
+}
+
+// treeError переводит ошибки проверок дерева в ответы API.
+func treeError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, tree.ErrNotFound):
+		return httpx.BadRequest("invalid_parent", "parent group not found")
+	case errors.Is(err, tree.ErrCycle):
+		return httpx.BadRequest("group_cycle", "group cannot be moved into itself or its subgroup")
+	case errors.Is(err, tree.ErrTooDeep):
+		return httpx.BadRequest("group_too_deep", fmt.Sprintf("groups can be nested at most %d levels deep", tree.MaxDepth))
+	}
+	return err
+}
+
+func normalizeName(raw string) (string, error) {
+	n, ok := words.NormalizeGroupName(raw)
+	if !ok {
+		return "", httpx.BadRequest("invalid_group_name", "group name must be a single tag")
+	}
+	return n, nil
+}
+
+// normalizeColor: nil — без цвета; иначе "#rrggbb" в нижнем регистре.
+func normalizeColor(c *string) (*string, error) {
+	if c == nil {
+		return nil, nil
+	}
+	if !colorRe.MatchString(*c) {
+		return nil, httpx.BadRequest("invalid_color", "color must be #RRGGBB")
+	}
+	lc := strings.ToLower(*c)
+	return &lc, nil
+}
+
+// parentOf: nil — корень (0); id ≤ 0 — ошибка, а не «корень», чтобы {"parentId": 0} не уехал туда молча.
+func parentOf(p *int64) (int64, error) {
+	if p != nil && *p <= 0 {
+		return 0, httpx.BadRequest("invalid_parent", "parentId must be a positive id or null")
+	}
+	return deref(p), nil
+}
+
+// deref / ptrOrNil — мост между parent_id (NULL = корень) и tree (0 = корень).
+func deref(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+func ptrOrNil(id int64) *int64 {
+	if id == 0 {
+		return nil
+	}
+	return &id
 }

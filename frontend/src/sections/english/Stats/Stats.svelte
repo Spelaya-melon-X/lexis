@@ -34,7 +34,7 @@
       const [o, c, a] = await Promise.all([api.stats.overview(), api.stats.calendar(), api.achievements.list()])
       today = o
       calendar = c
-      achievements = a
+      achievements = a.filter((x) => !x.code.startsWith('game_')) // ачивки «Игры» — в её статистике
       error = null
     } catch (e) {
       error = errorText(e)

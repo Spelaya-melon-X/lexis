@@ -151,7 +151,7 @@ func TestProductivity(t *testing.T) {
 					want = DayPoint{Day: p.Day}
 				}
 				if p.Sessions != want.Sessions || !floatPtrEqual(p.GoodShare, want.GoodShare) {
-					t.Errorf("%s: got %d %v, want %d %v", p.Day, p.Sessions, deref(p.GoodShare), want.Sessions, deref(want.GoodShare))
+					t.Errorf("%s: got %d %v, want %d %v", p.Day, p.Sessions, show(p.GoodShare), want.Sessions, show(want.GoodShare))
 				}
 			}
 		})
@@ -174,7 +174,7 @@ func floatPtrEqual(a, b *float64) bool {
 	return *a-*b < 1e-9 && *b-*a < 1e-9
 }
 
-func deref(f *float64) any {
+func show(f *float64) any {
 	if f == nil {
 		return nil
 	}

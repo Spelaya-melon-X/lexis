@@ -78,12 +78,15 @@ export interface WordPatch {
 
 // ---------- groups ----------
 
+// Счётчики — по поддереву: группа + подгруппы, слова уникально (§18.2).
 export interface Group {
   id: number
   name: string
   color: string | null
+  parentId: number | null // null — корень
   createdAt: string
   wordCount: number
+  ownWordCount: number // слова самой группы
   due: number
   repeatedToday: boolean
   levels: Levels
@@ -112,7 +115,17 @@ export interface GroupDetail {
 export interface GroupPatch {
   name?: string
   color?: string | null // null — убрать цвет; поле не передано — не менять
+  parentId?: number | null // null — в корень
 }
+
+export interface GroupCreate {
+  name: string
+  parentId?: number | null
+  color?: string | null
+}
+
+/** Что делать с подгруппами при удалении: поднять на уровень выше или удалить вместе. */
+export type GroupChildren = 'lift' | 'delete'
 
 // ---------- training ----------
 
@@ -376,4 +389,274 @@ export interface HabitStat {
   amount: number | null
   avgRating: number | null
   bestClean: number // negative: самая длинная серия без срыва
+}
+
+// ---------- игра: дела (§18.3) ----------
+
+export interface TaskType {
+  id: number
+  name: string
+  color: string | null
+  position: number
+}
+
+export interface TaskColumn {
+  id: number
+  name: string
+  position: number
+}
+
+/** Blocks, done, doneAt у дела с шагами вычислены по листьям (§18.3, B2). */
+export interface Task {
+  id: number
+  parentId: number | null
+  leaf: boolean // без шагов — только такие на доске
+  title: string
+  blocks: number // по 30 минут; у родителя — сумма листьев
+  ownBlocks: number // собственная оценка
+  importance: number // 1..10
+  deadline: string | null // YYYY-MM-DD
+  typeId: number | null
+  columnId: number
+  position: number
+  note: string
+  done: boolean
+  doneAt: string | null
+  workSec: number // время в фокусе; у родителя — вместе с шагами
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TaskInput {
+  title: string
+  blocks: number
+  importance: number
+  deadline?: string | null
+  typeId?: number | null
+  columnId: number
+  note?: string
+}
+
+/** Нет поля — не менять; deadline/typeId: null — убрать. */
+export type TaskPatch = Partial<Omit<TaskInput, 'columnId'>> & { done?: boolean }
+
+export type TaskFilter = 'false' | 'true' | 'all'
+
+/** Шаг при разбиении: не задано — как у родителя. */
+export interface TaskStep {
+  title: string
+  blocks: number
+  importance?: number
+  deadline?: string
+  typeId?: number
+}
+
+// ---------- игра: распорядок дня (§18.3, B3) ----------
+
+export interface GameSettings {
+  dayStart: number // минуты от полуночи
+  dayEnd: number
+  dayLimit: number // блоков
+}
+
+export interface PlanItem {
+  task: Task
+  start: number // минуты от полуночи, по получасам
+  blocks: number
+}
+
+/** Коды причин — ключи game.plan.reason.* */
+export type TopReason = 'overdue' | 'deadline_soon' | 'important' | 'quick'
+
+export interface TopItem {
+  task: Task
+  score: number
+  reasons: TopReason[]
+}
+
+export interface Plan {
+  day: string
+  editable: boolean // прошлые дни — только чтение
+  items: PlanItem[]
+  totalBlocks: number
+  settings: GameSettings
+  top: TopItem[]
+  leftovers: Task[]
+}
+
+// ---------- игра: фокус и награды (§18.3, B4) ----------
+
+export type FocusPhase = 'setup' | 'work' | 'break' | 'finished'
+export type FocusOutcome = 'done' | 'stopped' | 'abandoned'
+export type FocusAction = 'work' | 'break' | 'resume'
+
+/** Разбивка времени сессии в секундах (зеркало Go focus.Compute — lib/focus.timeline). */
+export interface FocusTimeline {
+  phase: FocusPhase
+  setupSec: number
+  workSec: number
+  breakSec: number
+  breakEarnedSec: number
+  breakAvailableSec: number
+  breakOverrunSec: number
+}
+
+export interface FocusSession {
+  id: number
+  taskId: number | null
+  taskTitle: string
+  day: string
+  plannedBlocks: number
+  startedAt: string
+  workStartedAt: string | null
+  finishedAt: string | null
+  outcome: FocusOutcome | null
+  breaks: { startedAt: string; endedAt: string | null }[]
+  distractions: { id: number; at: string; trigger: string; gaveIn: boolean }[]
+  timeline: FocusTimeline
+  points: number
+  now: string // время сервера — для поправки часов
+}
+
+export interface Reward {
+  id: number
+  title: string
+  price: number
+  archived: boolean
+}
+
+export interface LedgerEntry {
+  id: number
+  at: string
+  delta: number
+  kind: 'focus' | 'purchase'
+  title: string
+}
+
+export interface Purchase {
+  balance: number
+  dopamine: '' | 'added' | 'full' | 'failed'
+}
+
+// ---------- игра: статистика (§18.3, B5) ----------
+
+export interface FocusDayStat {
+  day: string
+  sessions: number
+  workSec: number
+  setupSec: number
+  breakSec: number
+  tasksDone: number
+  distractions: number
+  gaveIn: number
+}
+
+export interface FocusStats {
+  from: string
+  to: string
+  days: FocusDayStat[]
+  totals: FocusDayStat
+  triggers: { trigger: string; total: number; gaveIn: number }[]
+  tasksDone: { id: number; title: string; day: string }[]
+  sessions: { id: number; taskTitle: string; day: string; outcome: FocusOutcome; workSec: number; distractions: number; gaveIn: number }[]
+  records: {
+    totalWorkSec: number
+    totalTasks: number
+    bestDay: { day: string; workSec: number } | null
+    bestWeek: { day: string; workSec: number } | null // day — понедельник
+  }
+}
+
+// ---------- спорт (§18.4, §18.5.7) ----------
+
+/** Упражнение в тренировке: подходы × повторы × вес (вес необязателен — подтягивания). */
+export interface WorkoutEntry {
+  exerciseId: number
+  name: string
+  sets: number
+  reps: number
+  weight: number | null // кг
+  tonnage: number
+}
+
+export interface Workout {
+  id: number
+  day: string
+  title: string
+  notes: string
+  durationMin: number | null
+  kcal: number | null
+  exercises: WorkoutEntry[]
+  tonnage: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkoutInput {
+  day: string
+  title: string
+  notes: string
+  durationMin: number | null
+  kcal: number | null
+  exercises: { name: string; sets: number; reps: number; weight: number | null }[]
+}
+
+export interface Exercise {
+  id: number
+  name: string
+  uses: number
+  lastDay: string | null
+  last: { sets: number; reps: number; weight: number | null } | null // как делали в прошлый раз — значения по умолчанию
+}
+
+// ---------- спорт: еда, статистика, прогресс (§18.4, C2) ----------
+
+export interface Meal {
+  text: string
+  kcal: number | null // не знаю сколько
+}
+
+export interface FoodDay {
+  day: string
+  meals: Meal[]
+  eatenKcal: number
+  burnedKcal: number // на тренировках (с часов) — показываем рядом, без «баланса»
+}
+
+export interface SportDayStat {
+  day: string
+  workouts: number
+  burnedKcal: number
+  durationMin: number
+  tonnage: number
+  eatenKcal: number | null // null — еду не записывали
+}
+
+export interface SportStats {
+  from: string
+  to: string
+  days: SportDayStat[]
+  totals: {
+    workouts: number
+    workoutDays: number
+    burnedKcal: number
+    durationMin: number
+    tonnage: number
+    eatenKcal: number
+    foodDays: number
+    avgBurned: number | null
+    avgDuration: number | null
+    avgTonnage: number | null
+    avgEatenPerDay: number | null
+    avgBurnedPerDay: number | null
+  }
+  exercises: { id: number; name: string; workouts: number; sets: number; reps: number; maxWeight: number | null; tonnage: number }[]
+}
+
+export interface ProgressPoint {
+  day: string
+  maxWeight: number | null
+  tonnage: number
+  sets: number
+  reps: number
 }

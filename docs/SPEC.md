@@ -14,6 +14,7 @@
 
 Будущее (НЕ реализуем сейчас, но архитектура должна позволять добавить модулем): планер дня, To-Do, трекер привычек.
 **v2 (готово, 2026-11-05):** приложение — личный трекер: разделы «Английский», «День», «Привычки» и ⚙, см. §17.
+**v3 (готово, 2026-11-06):** вложенные группы английского, «Игра в жизнь» (дела, распорядок, фокус, награды, статистика), «Спорт» (тренировки, еда, статистика), см. §18.
 
 ---
 
@@ -787,3 +788,518 @@ frontend/src/sections/settings/   General, Data
    Роутинг: «#settings» (v1, без слэша) — по-прежнему настройки английского, «#/settings» — ⚙ (новый формат всегда со слэшем).
 
 Все фазы v2 закрыты (2026-11-05).
+
+---
+
+## 18. v3: вложенные группы → «Игра в жизнь» → Спорт (план, фаза 0 — 2026-11-05)
+
+> Статус: **согласовано 2026-11-05** — все рекомендации («рек.») и ответы на ❓ приняты как есть.
+> Порядок реализации: A → B → C (§18.5).
+
+Общие правила v3 (как в v2): только новые миграции (`0005_…`), раздел = модуль `app.Module` + строка в `router.go`,
+даты дня — `DATE` + `clock.DateOf/ParseDate`, из запроса — `platform/days`, PATCH с null — `httpx.Optional`,
+межмодульные связи — узкие интерфейсы, без новых зависимостей (DnD — нативный HTML5 + клавиатура, граф/таймеры/графики — свои).
+Бэкап новых данных — в той же фазе, что и модуль.
+
+### 18.1 Бэкап v3 и очистка
+
+- `BackupVersion = 3`: v2 + `groups[].parentId` (фаза A) + необязательные секции `game` (фазы B) и `sport` (фазы C) — по мере появления,
+  как `journal.weeks` в v2. Версию поднимаем в фазе A: старое приложение строго отвергает неизвестные поля, номер версии — честный сигнал.
+- Файлы v1/v2 восстанавливаются: `parentId` нет → все группы корневые; секций `game`/`sport` нет → эти разделы не трогаются (правило Q10).
+- Восстановление дерева (группы, дела): вставка всех строк, затем `UPDATE parent_id` по карте id (порядок строк в файле не важен);
+  `validateBackup` проверяет висячие `parentId`, циклы и глубину → 400 `invalid_backup`.
+- Очистка: `scope: english` — английский (группы вместе с деревом), `scope: all` — ещё игра и спорт. ❓ G1 Отдельные «Очистить игру/спорт»? (рек.: нет, пока не попросишь).
+
+### 18.2 Блок A — вложенные группы английского
+
+**Модель (рек.):** `groups.parent_id` (self-FK), без отдельной сущности «папка». Папка = группа без своих слов.
+- Группа может одновременно иметь свои слова и подгруппы.
+- Имена групп остаются **глобально уникальными**: тег `#аэропорт` однозначно указывает группу, где бы она ни лежала.
+- Глубина — не больше **3 уровней** (корень → подгруппа → под-подгруппа). ❓ A2 (рек.: 3; больше на десятках групп только путает).
+- Циклы и глубина проверяет чистая функция `groups.CheckMove(parents map[int64]*int64, id, newParent) error` (table-driven),
+  в транзакции под `pg_advisory_xact_lock` (дерево — десятки строк, грузим целиком). БД страхует `CHECK (parent_id <> id)`.
+- Порядок соседей — **по имени** ❓ A1 (рек.: по имени, как сейчас; ручной порядок ломается от групп, созданных тегами).
+  Поэтому DnD «между группами» = «в того же родителя, что и соседи».
+
+**Агрегаты по поддереву (рек.):**
+- Слово привязано только к своим группам (`word_groups` не меняется). «Слова родителя» = слова всего поддерева, **уникально** (слово в двух подгруппах — один раз).
+- `wordCount`, `due`, `levels`, `% Мастер+Архив` — по поддереву; дополнительно `ownWordCount` (свои слова).
+- Тренировка родителя = слова поддерева, уникально (обычная и free). ❓ A4 Переключатель «только свои слова» в тренировке? (рек.: нет, всегда поддерево).
+- «Повторена сегодня» ⇔ завершённая сессия сегодня по **самой группе или её предку** (предок тренировал её слова) ИЛИ due поддерева = 0.
+  Тренировка подгруппы родителя не засчитывает (кроме случая due = 0). ❓ A5 (рек.: так).
+- Аналитика родителя (продуктивность, сессии за неделю/месяц) — сессии по группе **и потомкам**.
+- Не меняются: `stats` «по группам-типам» и ачивка `first_archived_group` — по собственным словам группы ❓ A9 (рек.: не трогать).
+- SQL: поддерево — `WITH RECURSIVE sub(root, id)` (замыкание «предок → потомок») + `count(DISTINCT w.id) FILTER (…)`; без N+1.
+  training: `ListSessionWords` по `group_id = ANY(поддерево)` + `DISTINCT`; `WordInGroup` → «слово в поддереве».
+
+**Удаление родителя:** диалог с выбором ❓ A7 (рек.: по умолчанию «поднять подгруппы на уровень выше», вторая опция — «удалить вместе с подгруппами»).
+Слова не удаляются никогда (как сейчас). FK `ON DELETE RESTRICT` — дети обрабатываются в сервисе явно, а не каскадом «по ошибке».
+
+**Ввод тегом (рек.):** `/` — разделитель пути: `#путешествия/аэропорт` → недостающие группы создаются по пути, слово привязывается **к листу**.
+- Уже существующая группа с тем же именем, но другим родителем — не перемещаем, строка в `errors[]` с кодом `group_path_conflict`
+  (явная разметка, без догадок; превью этого не знает — ошибка придёт после «Создать»). ❓ A6 (рек.: так).
+- Путь длиннее 3 частей / пустая часть (`#a//b`) — ошибка парсера `invalid_group_path`.
+- Имя одной группы больше не может содержать `/` (`NormalizeGroupName`). ⚠️ Перед миграцией проверю, нет ли в базе групп с `/` в имени — если есть, обсудим.
+- CSV-экспорт без изменений (теги — имена групп); CSV/JSON-импорт понимает пути так же, как ввод.
+
+**БД — `0005_group_tree.sql`:**
+```sql
+ALTER TABLE groups ADD COLUMN parent_id BIGINT REFERENCES groups (id) ON DELETE RESTRICT,
+                   ADD CONSTRAINT groups_parent_not_self CHECK (parent_id <> id);
+CREATE INDEX groups_parent_idx ON groups (parent_id);
+```
+
+**API:**
+```
+GET    /api/groups                → Group += {parentId|null, ownWordCount}; wordCount/due/levels/repeatedToday — по поддереву (§18.2)
+POST   /api/groups                {name, parentId?, color?} → 201 Group   (пустая группа-папка; 400 invalid_group_name | invalid_parent | group_too_deep, 409 duplicate_group)
+PATCH  /api/groups/:id            += parentId?: id|null (httpx.Optional; null — в корень) → 400 group_cycle | group_too_deep | invalid_parent
+DELETE /api/groups/:id?children=lift|delete   (по умолчанию lift) → 204
+GET    /api/groups/:id            аналитика по поддереву; words — слова поддерева
+GET    /api/words?group=&subtree=true   (по умолчанию как сейчас — только свои)
+POST   /api/training/start        groupId → слова поддерева
+```
+
+**Фронт:**
+- `lib/groupTree.ts` (чистое, vitest): `buildTree`, `visibleRows(tree, collapsed)` (плоский список с отступом для рендера),
+  `descendants`, `canMove(tree, id, target)` (не в себя, не в потомка, глубина), `dropTarget` (into / root).
+- Список групп — дерево со сворачиванием (▸/▾; свёрнутые id — localStorage `lexis.groupsCollapsed`), у свёрнутого родителя видны агрегаты.
+- DnD (HTML5): строка — «внутрь» (подсветка), зона «В корень» сверху списка появляется при перетаскивании; запрещённая цель — курсор `not-allowed`.
+- Без мыши: меню строки «⋯» → «Переместить в…» (`MoveGroupDialog`: дерево-выбор, недоступные цели disabled, «В корень»).
+- «Новая группа» (`NewGroupDialog`: имя + родитель), удаление — `ConfirmDialog` с выбором lift/delete, если есть подгруппы.
+- Тренировка: выбор группы — тем же деревом (due по поддереву). Карточка группы — хлебные крошки «Путешествия › Аэропорт».
+
+### 18.3 Блок B — «Игра в жизнь»
+
+Раздел `game` в шапке. **Модули (рек.):** `tasks` (типы, колонки, дела, подзадачи, план дня, топ-5) и `focus` (ритуал, фокус-сессии,
+перерывы, отвлечения, очки, магазин). `focus` получает дела через узкий интерфейс `focus.Tasks{Get, Complete}` (реализует `*tasks.Service`). ❓ B2 (рек.: два модуля).
+
+**Навигация:**
+
+| Подраздел | Хэш |
+|---|---|
+| Распорядок (по умолчанию) | `#/game/plan[/<YYYY-MM-DD>]` (без даты — сегодня) |
+| Задачи (доска) | `#/game/board[/<taskId>]` (с id — карточка дела + «граф дела») |
+| Фокус | `#/game/focus` (активная сессия или «нет активной» → в распорядок) |
+| Награды | `#/game/shop` (магазин, баланс, история) |
+| Статистика | `#/game/stats` |
+| Настройки | `#/game/settings` (типы, колонки, ритуал, шкала дня, лимит, длительность настройки) |
+
+Баланс очков — в шапке раздела (над контентом). Активная фокус-сессия — плашка-таймер в шапке приложения (видна из любого раздела, клик → `#/game/focus`).
+
+#### B1. Дела, типы, доска
+- Дело: `title` (1..200), `blocks` — объём в блоках по 30 мин (1..40), `importance` 1..10, `deadline` DATE (❓ B3 необязателен? рек.: да),
+  `typeId` (необязателен), колонка, `note` (простой текст ≤ 20 000).
+- Типы — свои: имя (1..40, уникально без учёта регистра), цвет (палитра групп), порядок ↑↓.
+- **Колонки (рек.):** пользовательские списки (имя, порядок), DnD дел между колонками и внутри (ручной порядок) + фильтр доски по типу. ❓ B1
+  (рек.: свои списки; колонки по статусам дублировали бы «выполнено», по типам — фильтр). Первая колонка «Входящие» создаётся миграцией.
+  Удалить колонку можно только пустую (409 `column_not_empty`).
+- Доска показывает **листья** невыполненных дел (§B2), выполненные — переключатель «Показать выполненные». Карточка: тип (цвет), важность, объём (Nч Mм), дедлайн (просрочен — красным).
+- Без мыши: на карточке «⋯» → «Переместить в колонку…», ↑↓.
+
+#### B2. Подзадачи и граф
+- `tasks.parent_id` (self-FK, `ON DELETE CASCADE` — удаление дела удаляет его шаги, с подтверждением). Глубина произвольная, страховка — 10.
+- «Построить промежуточные шаги» → форма списка шагов → `POST /api/tasks/{id}/split` одной транзакцией.
+- **Наследование (рек.):** у нового шага по умолчанию тип, важность, дедлайн и колонка — от родителя (редактируются); объём вводится (по умолчанию 1).
+  Объём родителя = Σ объёмов листьев (вычисляется; исходная оценка сохраняется и показывается в графе «было 6, шаги 8»).
+- **Выполнено (рек.):** `done_at` — только у листьев. Родитель выполнен ⇔ все листья выполнены (вычисляется, не хранится).
+  Добавить шаг к выполненному листу нельзя (409 `task_done`); разбить дело с активной фокус-сессией — 409 `focus_active`.
+- После разбиения родитель пропадает с доски и из плана (его пункты плана удаляются, на распорядке — подсказка «добавь шаги»).
+- Граф: свой SVG, раскладка `lib/taskTree.layout` (чистая: листья по порядку по x, родитель — по центру детей), выполненные — светло-серым, остальные — белым, клик по узлу → карточка.
+
+#### B3. Распорядок дня и топ-5
+- Слева — шкала дня (по умолчанию 9:00–23:00, настройка), справа — топ-5 + «+» (поиск по всем листьям).
+- ~~Без привязки ко времени~~ → **с привязкой (решено 2026-11-05, см. §18.5.4):** у пункта есть `start` (по получасам), дело ставится
+  перетаскиванием в любое время; наложилось на другое — меняются местами; кнопок ↑↓ нет.
+- Лимит дня — 18 блоков (9 ч, настраивается). **Превышение показываем, не запрещаем** ❓ B6 (рек.: полоса «12/18 ч» краснеет, тост-предупреждение).
+- Планировать можно сегодня и любой будущий день; прошлые — только чтение (400 `past_day`). На одно дело — один пункт на день, но разные дни можно.
+- Незакрытое из прошлых планов — **не переносим автоматически**, на сегодня блок «Не доделал вчера: … [Перенести]». ❓ B8 (рек.: так).
+- **Формула топ-5** (`tasks.Score`, чистая, table-driven) — кандидаты: невыполненные листья, не в плане этого дня:
+  ```
+  I   = importance / 10                                  ∈ [0.1, 1]
+  d   = deadline − day (дни), dEff = d − ⌈blocks / 6⌉     -- крупное дело «срочнеет» раньше: 6 блоков ≈ день работы над ним
+  U   = 0, если дедлайна нет; 1, если dEff ≤ 0; иначе 2^(−dEff / 7)   -- полураспад срочности — неделя
+  Q   = 0.05, если blocks ≤ 2 (быстрая победа), иначе 0
+  score = 0.6·I + 0.4·U + Q
+  ```
+  Тай-брейк: раньше дедлайн → старше дело. В API отдаём `score` и `reasons` (`deadline_soon`, `overdue`, `important`, `quick`) — UI пишет «почему».
+  Примеры (день = пн):
+  | Дело | imp | blocks | дедлайн | U | score |
+  |---|---|---|---|---|---|
+  | Отчёт | 5 | 2 | завтра (d=1, dEff=0) | 1 | 0.30+0.40+0.05 = **0.75** |
+  | Просроченная мелочь | 3 | 1 | вчера | 1 | 0.18+0.40+0.05 = **0.63** |
+  | Курсовая | 7 | 12 | через 14 дн (dEff=12) | 0.30 | 0.42+0.12 = **0.54** |
+  | Мечта без срока | 9 | 8 | — | 0 | **0.54** |
+  | Разобрать шкаф | 2 | 4 | через 30 дн | 0.06 | 0.12+0.02 = **0.14** |
+
+#### B4. Ритуал фокуса
+Состояние — в БД, все отметки времени — из `clock`; фронт считает таймеры от серверных отметок + поправка `serverNow − Date.now()`
+(сервер отдаёт `now` в каждом ответе сессии). Одна активная сессия — частичный уникальный индекс.
+1. «Начать дело» (из плана или с карточки дела; только невыполненный лист) → сессия, фаза **настройка**, таймер 10 мин (настраивается).
+   Истёк — не блокируем, показываем перерасход. ❓ B10 (рек.: так).
+2. Чек-лист ритуала (настраиваемый список). Отметки — **на фронте** (localStorage по id сессии), сервер их не хранит ❓ B9
+   (рек.: так — это личный самоконтроль, не данные для статистики; перезагрузка их не сбрасывает). «Начал делать» активна, когда всё отмечено.
+3. **Работа:** таймер на `blocks` из плана — минимум, после него идёт дальше (перебор — зелёным «+12 мин»).
+4. **Перерывы:** накоплено = ⌊чистая работа / 30 мин⌋ × 5 мин; доступно = накоплено − потрачено (не меньше 0). Перерыв — отдельный таймер
+   обратного отсчёта, кончается кнопкой «Вернулся». Сверх доступного — можно, перерасход красным, в работу не идёт и не вычитается ❓ B12 (рек.: так).
+   Расчёт — чистая `focus.Timeline(session, breaks, now) → {setupSec, workSec, breakSec, breakAvailableSec, overrunSec, phase}` (table-driven).
+5. **Отвлечения:** триггер (≤ 200, автодополнение из прошлых — `GET /api/focus/triggers?q=`) + «поддался» / «справился», пишутся сразу.
+6. **Завершение (рек., ❓ B11):** `done` — «Я закончил» (лист выполнен), `stopped` — «На сегодня всё» (дело остаётся, время и очки засчитываются),
+   `abandoned` — «Отменить» (только в фазе настройки, в статистику не идёт). Завершение во время перерыва закрывает перерыв.
+
+#### B5. Статистика
+- Считается на лету: за день — выполненные дела, время (настройка/работа/перерывы), отвлечения (поддался/справился);
+  неделя/месяц — число выполненных дел и список, часы в фокусе по дням (`chart.bars`), топ-10 триггеров с долей «поддался».
+- **Достижения через eventbus (рек., ❓ B16):** теперь есть подписчик — добавляем события `FocusFinished{SessionID, WorkSec, Outcome, At}`
+  и `TaskCompleted{TaskID, At}`; `achievements.Evaluate` получает новые метрики снимка. Коды: `game_tasks_10/50/200`, `game_hours_10/50/200`
+  (за всё время). «За неделю/месяц» — не ачивки, а плитки-рекорды в статистике («лучшая неделя: 14 ч»). Ачивки игры показываются в её статистике (фильтр по префиксу `game_`).
+
+#### B6. Награды
+- **Очки (рек., ❓ B14):** +1 за каждые полные 30 мин **чистой работы** в сессии (без настройки и перерывов), начисляются при завершении (`done`/`stopped`), остаток не переносится.
+  Бонуса за выполненное дело нет (иначе выгодно дробить дела).
+- Магазин: свои награды (название ≤ 100, цена > 0, порядок, архив). Покупка — одна транзакция под `pg_advisory_xact_lock`: баланс < цены → 409 `not_enough_points`.
+- Журнал очков `points_ledger`: начисления и траты, баланс = Σ delta (не уходит в минус — проверяется при покупке). Лента с курсором, как наблюдения.
+- ❓ B15 Покупка → дофамин дня? (рек.: галочка «записать в дофамин» в диалоге покупки, по умолчанию выключена; пишет в первый свободный квадратик
+  сегодня через узкий интерфейс `focus.Dopamine` (реализует `journal.Service`); все 7 заняты — покупка проходит, тост «шкала полная»).
+
+**БД:**
+```sql
+-- 0006_tasks.sql (B1)
+task_types   (id, name TEXT CHECK 1..40, color TEXT NULL CHECK ~ '^#[0-9a-f]{6}$', position INT, created_at)  UNIQUE INDEX (lower(name))
+task_columns (id, name TEXT CHECK 1..40, position INT, created_at)          -- + INSERT «Входящие»
+tasks        (id, title TEXT CHECK 1..200, blocks SMALLINT CHECK 1..40, importance SMALLINT CHECK 1..10, deadline DATE NULL,
+              type_id → task_types ON DELETE SET NULL, column_id → task_columns ON DELETE RESTRICT NOT NULL, position INT,
+              note TEXT NOT NULL DEFAULT '' CHECK ≤ 20000, done_at TIMESTAMPTZ NULL, created_at, updated_at)
+              INDEX (column_id, position)
+-- 0007_task_tree.sql (B2)
+ALTER TABLE tasks ADD parent_id BIGINT REFERENCES tasks ON DELETE CASCADE, CHECK (parent_id <> id);  INDEX (parent_id)
+-- 0008_day_plans.sql (B3)
+plan_items   (day DATE, task_id → tasks ON DELETE CASCADE, position SMALLINT, blocks SMALLINT CHECK 1..40, PRIMARY KEY (day, task_id))
+-- 0009_focus.sql (B4)
+ritual_items (id, text TEXT CHECK 1..100, position INT)
+focus_sessions (id, task_id → tasks ON DELETE SET NULL, task_title TEXT NOT NULL,   -- снимок: статистика переживает удаление дела
+                day DATE, planned_blocks SMALLINT, started_at, work_started_at NULL, finished_at NULL,
+                outcome TEXT NULL CHECK IN ('done','stopped','abandoned'), CHECK ((finished_at IS NULL) = (outcome IS NULL)))
+                UNIQUE INDEX ON focus_sessions ((true)) WHERE finished_at IS NULL;   INDEX (day)
+focus_breaks (id, session_id → CASCADE, started_at, ended_at NULL)  UNIQUE INDEX (session_id) WHERE ended_at IS NULL
+focus_distractions (id, session_id → CASCADE, at, trigger TEXT CHECK 1..200, gave_in BOOL)
+rewards      (id, title TEXT CHECK 1..100, price INT CHECK > 0, position INT, archived_at NULL, created_at)
+points_ledger(id, at, delta INT CHECK <> 0, kind TEXT CHECK IN ('focus','purchase'), title TEXT,     -- снимок названия
+              focus_session_id → SET NULL UNIQUE NULL, reward_id → SET NULL NULL)
+```
+Настройки раздела — ключи в `settings` (бэкапятся сами): `game_day_start`/`game_day_end` (минуты от полуночи, 540/1380),
+`game_day_limit` (блоки, 18), `focus_setup_min` (10). Читает/пишет `GET/PUT /api/tasks/settings` с валидацией (`tasks.SettingsPatch.Apply`).
+
+**API:**
+```
+# tasks
+GET/POST /api/tasks/types,  PATCH/DELETE /api/tasks/types/{id},  PUT /api/tasks/types/order {ids}
+GET/POST /api/tasks/columns, PATCH/DELETE /api/tasks/columns/{id} (409 column_not_empty), PUT /api/tasks/columns/order {ids}
+GET    /api/tasks?done=false|true|all   → {tasks: Task[]}   (плоско, дерево строит фронт)
+       Task = {id, parentId|null, title, blocks, ownBlocks, importance, deadline|null, typeId|null, columnId, position, note,
+               leaf, done, doneAt|null, workSec, createdAt}
+POST   /api/tasks                       {title, blocks, importance, deadline?, typeId?, columnId} → 201 Task
+PATCH  /api/tasks/{id}                  {title?, blocks?, importance?, deadline?: date|null, typeId?: id|null, note?, done?} → Task
+POST   /api/tasks/{id}/move             {columnId, index} → 204   (одна транзакция: колонка + порядок)
+POST   /api/tasks/{id}/split            {steps: [{title, blocks, importance?, deadline?, typeId?}]} → {tasks: поддерево}   (B2)
+GET    /api/tasks/{id}/tree             → {tasks: поддерево корня}                                                     (B2)
+DELETE /api/tasks/{id}                  → 204 (с шагами)
+GET    /api/tasks/plan/{day}            → {day, items: [{task, blocks}], totalBlocks, limitBlocks, top: [{task, score, reasons}], leftovers: Task[]}
+PUT    /api/tasks/plan/{day}            {items: [{taskId, blocks}]} → Plan   (порядок = порядок массива; 400 past_day | invalid_task | task_not_leaf)
+GET/PUT /api/tasks/settings             {dayStart, dayEnd, dayLimit, setupMin}
+# focus
+GET    /api/focus/active                → {session: Session|null, now}
+POST   /api/focus/sessions              {taskId} → 201 Session   (409 focus_active; 400 task_not_leaf | task_done)
+POST   /api/focus/sessions/{id}/work | /break | /resume → Session      (409 invalid_phase)
+POST   /api/focus/sessions/{id}/distractions {trigger, gaveIn} → Session
+POST   /api/focus/sessions/{id}/finish  {outcome} → {session, timeline, points}   (409 session_finished)
+       Session = {id, taskId|null, taskTitle, day, plannedBlocks, startedAt, workStartedAt|null, finishedAt|null, outcome|null,
+                  breaks: [{startedAt, endedAt|null}], distractions: [{at, trigger, gaveIn}], now}
+GET    /api/focus/triggers?q=           → {triggers: string[]}   (частые сверху)
+GET/PUT /api/focus/ritual               {items: [{id?, text}]}   (PUT заменяет список)
+GET/POST /api/focus/rewards, PATCH/DELETE /api/focus/rewards/{id}, PUT /api/focus/rewards/order
+POST   /api/focus/rewards/{id}/buy      {dopamine?: bool} → {balance}   (409 not_enough_points)
+GET    /api/focus/points?before=&limit= → {balance, entries: [...], next}
+GET    /api/focus/stats?from=&to=       → {days: [{day, workSec, setupSec, breakSec, sessions, tasksDone}], tasksDone: [...], triggers: [{trigger, total, gaveIn}], totals}
+```
+
+**Фронт** (`sections/game/`): `Plan/{Plan,DayScale,TopList,TaskPicker}`, `Board/{Board,Column,TaskCard,TaskDialog,SplitDialog,TaskGraph}`,
+`Focus/{Focus,Setup,Work,Break,DistractionForm,Summary}`, `Shop/{Shop,RewardDialog,Ledger}`, `Stats/`, `Settings/`; `lib/components/FocusPill` (шапка).
+Чистое (vitest): `lib/plan.layout`, `lib/taskTree.{buildTree, leaves, layout}`, `lib/focus.timeline` (зеркало Go-версии), `lib/board.move` (оптимистичный порядок).
+Go (table-driven): `tasks.Score`/`Top`, `tasks.Rollup` (объём и «выполнено» родителя), `tasks.CheckSplit`, `focus.Timeline`, `focus.Points`, `focus.CanTransition`.
+
+### 18.4 Блок C — Спорт и еда (модуль `sport`)
+
+**Навигация (рек., ❓ C1):** раздел `sport` — Тренировки `#/sport/workouts[/<понедельник>]` · Еда `#/sport/food[/<YYYY-MM-DD>]` ·
+Упражнения `#/sport/exercises[/<id>]` (справочник + прогресс) · Статистика `#/sport/stats`.
+
+**Тренировки:**
+- Сверху — неделя (Пн..Вс, ← →, «Сегодня»), сегодня — бледно-зелёный (`--c-green-soft`), в дне — названия тренировок; клик по дню — форма на эту дату.
+- Тренировка: дата, название (≤ 100, подсказки из прошлых ❓ C7 — рек.: свободный текст с автодополнением, без справочника типов),
+  «как прошла» (простой текст), длительность (мин) и ккал — вручную. Несколько тренировок в день — можно. Будущие даты — нет (`future_day`).
+- Упражнения через «+»: название с автодополнением из справочника; новое имя попадает в справочник при сохранении (get-or-create, как теги).
+  При выборе упражнения подходы **подставляются из прошлого раза** (`lastSets`), «+ подход» копирует предыдущий; всё редактируется. ❓ C3 (рек.: так).
+- **Упражнения без веса (рек., ❓ C2):** у упражнения `measure`: `weight` (повторы × кг — обязательны оба), `reps` (повторы, вес — необязательный «доп. вес»),
+  `time` (секунды, вес необязателен — планка с блином). Тип задаётся при создании, меняется в справочнике. Тоннаж = Σ повторы × вес (где оба есть).
+- Сохранение — тренировка целиком (`PUT`, как блоки недели): упражнения и подходы заменяются списком.
+
+**Еда:** за день — список `{текст ≤ 200, ккал?}` (Enter — добавить, как «Что классного»), подсказки из прошлого с последними ккал, сумма за день.
+❓ C4 Сравнение с тренировками (рек.: показываем рядом «съел 2 100 · на тренировках 450», **без** «баланса»: часы дают только активные ккал,
+без базового обмена разница вводит в заблуждение). Цель ккал в день — ❓ C5 (рек.: пока нет).
+
+**Статистика (неделя/месяц):** ккал тренировок и еды по дням (таблица + среднее), число тренировок, упражнения (сколько раз, подходы, тоннаж),
+тоннаж за тренировку/неделю. **Прогресс упражнения (рек.):** по тренировкам — макс. вес, тоннаж, лучшие повторы/время; линейный график (`chart.plot`).
+Оценку 1ПМ (Эпли) — ❓ C6 (рек.: нет, макс. веса хватает).
+
+**Apple Health (оценка, не делаем):** экспорт с iPhone (`export.zip` → `export.xml`) содержит `<Workout>` с длительностью и ккал — офлайн
+разбирается потоково стандартным `encoding/xml` без зависимостей. Но файл обычно 200 МБ–2 ГБ (лимит импорта 20 МБ), нужен дедуп по времени начала
+и маппинг типов тренировок. Реально, отдельной фазой C3 по запросу.
+
+**БД:**
+```sql
+-- 0010_sport.sql (C1)
+exercises         (id, name TEXT CHECK 1..60, measure TEXT CHECK IN ('weight','reps','time'), created_at)  UNIQUE INDEX (lower(name))
+workouts          (id, day DATE, title TEXT CHECK 1..100, notes TEXT CHECK ≤ 20000, duration_min INT NULL CHECK 1..1440,
+                   kcal INT NULL CHECK 0..20000, created_at, updated_at)   INDEX (day)
+workout_exercises (id, workout_id → workouts ON DELETE CASCADE, exercise_id → exercises ON DELETE RESTRICT, position SMALLINT,
+                   UNIQUE (workout_id, position))   INDEX (exercise_id)   -- прогресс и lastSets
+workout_sets      (workout_exercise_id → CASCADE, position SMALLINT, reps INT NULL CHECK 1..10000,
+                   weight DOUBLE PRECISION NULL CHECK 0..1000, seconds INT NULL CHECK 1..86400, PRIMARY KEY (workout_exercise_id, position))
+-- 0011_meals.sql (C2)
+meals             (id, day DATE, position SMALLINT, text TEXT CHECK 1..200, kcal INT NULL CHECK 0..10000, created_at, UNIQUE (day, position))
+```
+
+**API:**
+```
+GET    /api/sport/workouts?from=&to=     → {workouts: Workout[]}   (по умолчанию текущая неделя)
+       Workout = {id, day, title, notes, durationMin|null, kcal|null, exercises: [{exerciseId, name, measure, sets: [{reps|null, weight|null, seconds|null}]}]}
+POST   /api/sport/workouts               {day, title, notes?, durationMin?, kcal?, exercises: [{name, measure?, sets}]} → 201
+PUT    /api/sport/workouts/{id}          то же → Workout;   DELETE → 204
+GET    /api/sport/titles?q=              → {titles: string[]}
+GET    /api/sport/exercises?q=           → {exercises: [{id, name, measure, lastSets}]}
+PATCH  /api/sport/exercises/{id}         {name?, measure?} → 409 duplicate_exercise | 400 measure_conflict (есть подходы не того вида)
+GET    /api/sport/exercises/{id}/progress?from=&to= → {points: [{day, maxWeight|null, volume, bestReps|null, bestSeconds|null}]}
+GET    /api/sport/meals/{day}            → {day, meals: [{text, kcal|null}], eatenKcal, burnedKcal}
+PUT    /api/sport/meals/{day}            {meals: [...]} → то же   (заменяет список)
+GET    /api/sport/meals/suggest?q=       → {meals: [{text, kcal|null}]}
+GET    /api/sport/stats?from=&to=        → {days: [{day, workouts, burnedKcal, eatenKcal|null, tonnage}], exercises: [{id, name, workouts, sets, tonnage}], avg}
+       400 invalid_date | invalid_range | future_day | invalid_set | invalid_measure | empty_text | text_too_long | invalid_kcal | invalid_duration
+```
+Чистое: Go — `sport.ValidateSet(measure, set)`, `sport.Tonnage`, `sport.Progress`, `sport.DayTotals`; фронт — `lib/sport.{weekDays, setDefaults, formatSet, parseNumber}`.
+
+### 18.5 Фазы v3
+
+| Фаза | Срез | Миграция | Бэкап |
+|---|---|---|---|
+| A ✅ 2026-11-05 | Дерево групп: модель, агрегаты по поддереву, тренировка поддерева, `POST /groups`, перенос/удаление, теги с путём; фронт — дерево, DnD, «Переместить в…», новая группа, выбор группы в тренировке | 0005 | v3, `parentId` |
+| B1 ✅ 2026-11-05 | Раздел «Игра» (`route.ts`/`nav.ts`), типы, колонки, дела, доска с DnD, настройки раздела | 0006 | `game.{types, columns, tasks}` |
+| B2 ✅ 2026-11-05 | Подзадачи (split, свёртка), граф дела | 0007 | `tasks[].parentId` |
+| B3 ✅ 2026-11-05 | Распорядок дня: план, шкала, лимит, топ-5, «не доделал вчера» | 0008 | `game.plans` |
+| B4 ✅ 2026-11-05 (миграция 0010 — 0009 занята под время плана) | Фокус-ритуал (настройка, чек-лист, работа, перерывы, отвлечения), плашка в шапке, очки, магазин (+ дофамин, если B15 = да) | 0009 | `game.{ritual, sessions, rewards, ledger}` |
+| B5 ✅ 2026-11-05 | Статистика игры, события `FocusFinished`/`TaskCompleted` → достижения | — | — |
+| C1 ✅ 2026-11-06 | Раздел «Спорт»: неделя, тренировки, справочник упражнений, подстановка подходов | 0011 (сдвиг: 0010 — фокус) | `sport.{exercises, workouts}` |
+| C2 ✅ 2026-11-06 | Еда, статистика спорта (месяц), прогресс упражнения | 0013 (0012 — упрощение упражнений) | `sport.meals` |
+
+Каждая фаза — вертикальный срез; в конце: `go build/vet/test -race`, интеграционные (5444), `npm run check && npm test && npm run build`, отчёт, отметка здесь, стоп до «ок».
+Перед первой миграцией (фаза A) — напомнить о бэкапе (⚙ → Данные → экспорт JSON).
+
+### 18.5.1 Фаза A — сделано (2026-11-05)
+
+- **Бэк:** миграция `0005_group_tree`; пакет `internal/groups/tree` (чистый, table-driven: `Depth/Height/Subtree`, `CheckMove`, `CheckNew`,
+  `CheckPath`, `CheckPaths`, `Validate`, `LockKey`) — его используют groups, words и importexport (отдельный пакет, т.к. groups импортирует words).
+  groups: агрегаты по поддереву одним запросом (`WITH RECURSIVE` замыкание + `count(DISTINCT …)`), `POST /api/groups`, `PATCH parentId`,
+  `DELETE ?children=lift|delete`; words: теги с путём, `GET /api/words?subtree=true`; training: слова и проверка ответа — по поддереву.
+  Бэкап v3 с `groups[].parentId` (второй проход `SetGroupParent`; v1/v2 с `parentId` → `invalid_backup`).
+- **Фронт:** `lib/groupTree.ts` (+ тесты), дерево в «Группах» (сворачивание — localStorage `lexis.groupsCollapsed`, предки открытой группы
+  разворачиваются сами), DnD, «⋯» → `MoveGroupDialog`, `NewGroupDialog`, хлебные крошки и выбор lift/delete в карточке группы,
+  выбор группы в тренировке — в порядке дерева с путём предков. Шпаргалка ввода — про `#a/b`.
+- **Уточнения по ходу реализации:**
+  - Путь в теге **относительный**: первая часть может лежать где угодно, каждая следующая обязана быть ребёнком предыдущей
+    (`#airport/gates` работает, даже если airport внутри travel). Несколько путей одной карточки проверяются вместе (`CheckPaths`):
+    `#x/y #z/y` — конфликт. Строка с ошибкой не сохраняет ни слово, ни новые группы.
+  - Ошибки сохранения (`group_path_conflict`, `group_too_deep`) приходят в том же `errors[]` bulk/импорта, отсортированные по строке;
+    `words.SaveCards` теперь возвращает `SaveResult{Created, Merged, Errors}` (текст строки подставляет вызывающий). Коды разбора: `invalid_group_path`.
+  - Имя группы (переименование, создание) не может содержать `/`. В рабочей базе таких групп не было (проверено 2026-11-05, 14 групп).
+  - DnD: середина строки — внутрь, верхний/нижний край — рядом (к тому же родителю); зона «На верхний уровень» появляется при перетаскивании
+    вложенной группы. Перенос на то же место не подсвечивается.
+  - Выбор lift/delete в диалоге удаления показывается, только если у группы есть подгруппы. Новый код ошибки — `invalid_children`.
+  - `parentId: 0` → 400 `invalid_parent` (а не «в корень»): корень — только `null`.
+  - CSV-экспорт без изменений: тег = имя группы; при реимпорте слово попадает в существующую группу, где бы она ни лежала.
+
+### 18.5.2 Фаза B1 — сделано (2026-11-05)
+
+- **Бэк:** миграция `0006_tasks` (`task_types`, `task_columns`, `tasks`), модуль `internal/tasks` (`/api/tasks`):
+  типы (CRUD + `PUT /types/order`), колонки (CRUD + `PUT /columns/order`, `DELETE /columns/{id}?to=<id>`), дела
+  (`GET ?done=false|true|all`, `POST`, `PATCH` с `done`, `POST /{id}/move {columnId, beforeId}`, `DELETE`).
+  Чистое (table-driven): `TypeInput.Normalize`, `TypePatch.Apply`, `ColumnName`, `TaskInput.Normalize`, `Patch.Apply`, `Reorder`, `CheckOrder`.
+  Бэкап v3 — секция `game {types, columns, tasks}` (по разделам, как habits; v1/v2 с `game` → `invalid_backup`), `restored.tasks`;
+  «Очистить всё» чистит и игру.
+- **Фронт:** раздел `game` в шапке (иконка-геймпад), подразделы пока «Задачи» и «Настройки» — остальные появятся в своих фазах
+  (`SECTIONS.game` растёт по фазам). Доска: колонки с горизонтальным скроллом, DnD карточек (вставка по серединам карточек —
+  `lib/tasks.dropBefore`), оптимистичный перенос (`moveTask` — зеркало Go `Reorder`), без мыши — кнопки ← ↑ ↓ → на карточке,
+  фильтр по типу и «Показать выполненные» (запоминаются, localStorage `lexis.board`), быстрое добавление внизу колонки
+  (по умолчанию 1 ч, важность 5), диалог дела (объём, важность ползунком 1..10, дедлайн, тип, колонка, заметка), `#/game/board/<id>` открывает дело.
+  Настройки: колонки и типы — переименование по клику, порядок ↑↓, цвет типа, удаление колонки с выбором, куда перенести дела.
+- **Уточнения по ходу:**
+  - Колонку «Входящие» миграция **не** создаёт (в миграции нет clock, а название зависит от языка): на пустой доске —
+    форма «Создать колонку» с подставленным из i18n названием.
+  - Перестановка — `beforeId`, а не индекс: на доске могут быть скрыты выполненные дела, и индекс фронта не совпал бы с БД.
+  - Удаление колонки с делами (в т.ч. выполненными) — только с `?to=`: дела встают в конец целевой колонки в своём порядке; иначе 409 `column_not_empty`.
+  - Удаление типа не трогает дела (`ON DELETE SET NULL`).
+  - Новые коды ошибок: `invalid_type_name`, `duplicate_type`, `invalid_type`, `invalid_column`, `invalid_column_name`, `column_not_empty`,
+    `invalid_title`, `invalid_blocks`, `invalid_importance`, `invalid_task`, `invalid_filter`.
+  - Поля `parentId`, `leaf`, `ownBlocks`, `workSec` у `Task` — в фазах B2/B4, вместе со своими данными.
+
+### 18.5.3 Фаза B2 — сделано (2026-11-05)
+
+- **Бэк:** миграция `0007_task_tree` (`tasks.parent_id` → `ON DELETE CASCADE`, `CHECK (parent_id <> id)`).
+  `tasks/tree.go` (чистое, table-driven): `Rollup` (лист/родитель, объём = Σ листьев, выполнено и `doneAt` = когда закрыт
+  последний лист, глубина, корень), `SplitInput.Normalize` (наследование важности/дедлайна/типа), `CheckSplit`, `PlaceAfter`.
+  API: `POST /api/tasks/{id}/split {steps}` → всё дерево, `GET /api/tasks/{id}/tree` → дерево от корня (обход в глубину);
+  `Task` += `parentId`, `leaf`, `ownBlocks`; `blocks`/`done`/`doneAt` у родителя вычислены. Список дел фильтрует по вычисленной
+  выполненности (грузится целиком — дел сотни). Бэкап: `game.tasks[].parentId` (второй проход, цикл/висячая ссылка/глубина → `invalid_backup`).
+- **Фронт:** доска показывает только листья, у шага — хлебные крошки родителей (клик → граф); в диалоге дела — «Разбить на шаги»
+  (`SplitDialog`: список «название + объём», Enter — следующий шаг) и «Граф дела» (`TaskGraph`: свой SVG, `lib/taskTree.layoutTree` —
+  листья по слотам, родитель над серединой детей; выполненные — светло-серые, клик по узлу — открыть дело).
+  Закрыли последний шаг — тост «… выполнено целиком».
+- **Уточнения по ходу:**
+  - `done` у дела с шагами — 409 `task_not_leaf`; выполненный лист не разбивается — 409 `task_done` (сначала вернуть в работу);
+    глубина > 10 — 400 `task_too_deep`; шагов 1..30 — иначе 400 `invalid_steps`.
+  - Шаги встают в колонку родителя сразу после него (родитель скрыт — шаги оказываются на его месте).
+  - У родителя в диалоге правится только «первоначальная оценка» (`ownBlocks`), колонку не выбираем — шаги живут своей жизнью.
+  - Пункты плана дня для родителя (B3) — появятся с планом: разбиение будет убирать родителя из планов.
+
+### 18.5.4 Фаза B3 — сделано (2026-11-05)
+
+- **Бэк:** миграция `0008_day_plans` (`plan_items (day, task_id) PK`, `position`, `blocks 1..40`, индекс по `task_id`).
+  `tasks/plan.go` (чистое, table-driven): `Score` (формула §18.3, примеры из SPEC — в тестах), `Top` (тай-брейк: дедлайн → старше → id;
+  сравнение с допуском 1e-9), `PlanInput.Normalize`, `SettingsPatch.Apply`. API: `GET/PUT /api/tasks/plan/{day}` →
+  `Plan {day, editable, items: [{task, blocks}], totalBlocks, settings, top: [{task, score, reasons}], leftovers}`,
+  `GET/PUT /api/tasks/settings {dayStart, dayEnd, dayLimit}` (ключи `game_day_*` в `settings`, мусор → значения по умолчанию).
+  Разбиение дела на шаги удаляет его пункты из всех планов. Бэкап: `game.plans` (плоско `{day, taskId, position, blocks}`; в файлах B1/B2 ключа нет — пусто).
+- **Фронт:** подраздел «Распорядок» — первый в «Игре» (`#/game/plan[/<день>]`, `DatePager` теперь пускает в будущее: `max` необязателен,
+  `today` отдельно). Слева шкала: часовые отметки, дела подряд от начала дня (`lib/plan.layout`), перебор за конец дня — красная штриховка,
+  у пункта — ✓, ± блоки, ↑↓, ×, DnD; клик по названию — дело на доске. Сверху — «3 ч из 9 ч» (красное при превышении + тост).
+  Справа — «Не доделал» (янтарный блок), топ-5 с причинами (`просрочено`, `скоро дедлайн`, `важное`, `быстро`), «+ Любое дело» (`TaskPicker` с поиском).
+  Настройки «Игры» — карточка «Распорядок дня» (начало/конец по получасам, лимит в часах).
+- **Доработка 2026-11-05 (по отзыву Danik): дело — в любое время на шкале.** Миграция `0009_plan_start` (`plan_items.start_min`,
+  по получасам, `CHECK 0..1410`; старые пункты разложены подряд от 9:00 по `position`). `PlanItemInput{taskId, start, blocks}`,
+  `Normalize` проверяет: начало по получасам, дело целиком в сутках (400 `invalid_start`), пункты не пересекаются (400 `plan_overlap`);
+  ответ — по времени. Бэкап: `plans[].start` (в файлах первой версии B3 нет — `fillPlanStarts` раскладывает подряд от 9:00, как миграция).
+  Фронт (`lib/plan`, чистое): `place` — перетащенное дело на новое время; наложилось — **меняется местами** с ближайшим по началу
+  из перекрытых, остаточные пересечения (дела разной длины) снимает `resolve` (последующие сдвигаются вниз, ранние не двигаются никогда);
+  `resize` — ± блоки сдвигают последующие; `firstFree` — новое дело в первое свободное окно (сегодня — не раньше «сейчас»).
+  Перетаскивание с призраком-предпросмотром (время по верху карточки, с учётом места захвата), кнопки ↑↓ убраны —
+  без мыши стрелки ↑/↓ на выделенном деле (те же правила). Дела до начала / после конца дня — шкала расширяется, лишнее заштриховано.
+- **Уточнения по ходу:**
+  - «Не доделал» — открытые листья из планов **7 дней до** выбранного дня, которых нет в нём; свежие первыми, каждое дело один раз.
+  - Выполненное после планирования остаётся в своём дне и пересохраняется вместе с планом; добавить новое выполненное — 400 `task_done`;
+    дело с шагами — 400 `task_not_leaf`; прошлый день — 400 `past_day` (GET отдаёт его только для чтения, без топа).
+  - Объём пункта по умолчанию — объём дела (не больше 40 блоков); правится на шкале по полчаса.
+  - Новые коды: `past_day`, `invalid_day_bounds`, `invalid_day_limit` (+ уже были `invalid_task`, `invalid_blocks`, `too_many_items`).
+  - Курсовая (0.542) в топе чуть выше «Мечты» (0.540): в таблице §18.3 обе округлены до 0.54.
+
+### 18.5.5 Фаза B4 — сделано (2026-11-05)
+
+- **Бэк:** миграция `0010_focus` (`ritual_items`, `focus_sessions` с частичным уникальным индексом «одна активная», `focus_breaks`
+  с «одним открытым перерывом», `focus_distractions`, `rewards`, `points_ledger` с `UNIQUE focus_session_id`). Модуль `internal/focus` (`/api/focus`).
+  Чистое (table-driven): `Compute` (фаза, настройка, чистая работа, перерывы, заработано/доступно/перерасход), `Points`, `CheckAction`, `CheckFinish`,
+  валидация отвлечения, ритуала, награды, настроек. Связи — узкие интерфейсы: `focus.Tasks{Get, Complete}` (`*tasks.Service`, + новые
+  `tasks.Service.Get/Complete`), `focus.Dopamine{AddDopamine}` (`*journal.Service`, новый `AddDopamine` + чистые `FirstFreeSlot`, `TruncateDopamine`).
+  Покупка — под `pg_advisory_xact_lock`; «Я закончил» отмечает дело после коммита (ошибка — в лог, отработанное время не теряется).
+  Разбить дело с активной сессией — 409 `focus_active`. Бэкап: `game.{ritual, sessions (с breaks, distractions), rewards, ledger}`.
+- **Фронт:** подразделы «Фокус» и «Награды»; `lib/focus.timeline` — зеркало Go `Compute` (те же тест-случаи), `state/focus.svelte.ts` — активная
+  сессия на всё приложение (поправка часов по `now`, тик раз в секунду, перечитывание при фокусе вкладки и раз в минуту), `FocusPill` в шапке
+  (настройка — жёлтая, работа — зелёная, перерыв — серая; клик → «Фокус»). «▶ Начать» — у дела в распорядке (сегодня) и в диалоге дела.
+  «Фокус»: настройка (обратный отсчёт, перерасход красным, чек-лист — отметки в localStorage по id сессии, «Начал делать» после всех отметок),
+  работа (время, прогресс к плану, «+N сверх плана», копилка перерыва), перерыв (обратный отсчёт доступного, перерасход), отвлечения
+  (подсказки — частые триггеры, «Поддался»/«Справился»), итог (работа, настройка, перерывы, отвлечения, очки). Без сессии — быстрый старт из плана дня.
+  «Награды»: баланс, магазин (купить → подтверждение с галочкой «записать в дофамин дня»), правка/архив/удаление/порядок, история очков с подгрузкой.
+  Настройки «Игры» — карточка «Ритуал фокуса» (по пункту на строку + минут на настройку).
+- **Уточнения по ходу:**
+  - Длительность настройки — `GET/PUT /api/focus/settings {setupMin}` (ключ `focus_setup_min`), а не в `/api/tasks/settings`: её читает focus.
+  - Код «сессия уже завершена» — `focus_finished` (`session_finished` занят тренировкой английского, у него свой текст).
+  - Баланс показывается на «Наградах» (и очки — тостом после сессии), а не над каждым подразделом «Игры».
+  - Минимум работы — блоки дела в сегодняшнем плане, нет в плане — объём дела.
+  - Покупка в дофамин: все 7 квадратиков заняты — покупка проходит, тост «шкала полная»; длинное название обрезается до 140 символов.
+  - `Task.workSec` (время в фокусе на карточке) — в B5 вместе со статистикой.
+  - Новые коды: `focus_active`, `invalid_phase`, `focus_finished`, `invalid_outcome`, `invalid_price`, `reward_archived`, `not_enough_points`, `invalid_setup_min`.
+
+### 18.5.6 Фаза B5 — сделано (2026-11-05). Блок B закрыт.
+
+- **События:** `eventbus.FocusFinished{SessionID, WorkSec, Outcome, At}` (focus, после коммита; отменённые не публикуются) и
+  `eventbus.TaskCompleted{TaskID, At}` (tasks, когда лист стал выполненным — с доски, в распорядке или «Я закончил»; повторное `done` не дублирует).
+  `tasks.NewService` и `focus.NewService` принимают `eventbus.Publisher`.
+- **Достижения:** `game_tasks_10/50/200` (дел-листов с `done_at`) и `game_hours_10/50/200` (полных часов чистой работы в завершённых неотменённых
+  сессиях — SQL «от начала работы до конца минус перерывы»). Подписчик achievements реагирует и на новые события; GET по-прежнему догоняет.
+  В английской статистике ачивки `game_*` не показываются — они в статистике игры.
+- **Статистика:** `GET /api/focus/stats?from=&to=` (по умолчанию 7 дней) → `{days[], totals, triggers (топ-10), tasksDone[], sessions[], records}`.
+  Чистое: `focus.Summarize` (по дням окна, отменённые и вне окна — не в счёт, топ триггеров: частые → по алфавиту), `focus.BuildRecords`
+  (всего часов и дел, лучший день и неделя с понедельника; при равенстве — более ранний). Дела — все закрытые в окне (и с доски), день — в TZ пользователя.
+- **`Task.workSec`:** время в фокусе (SQL по сессиям дела), у родителя — своё + всех шагов (`Rollup`); на карточке — зелёная пилюля.
+- **Фронт:** подраздел «Статистика» в «Игре»: сегодня / 7 / 30 дней (запоминается), плитки (в фокусе, дел, сессий, отвлечений «поддался/справился»,
+  настройка/перерывы), столбики времени по дням (`chart.bars`), «Что сделано», «Что отвлекало» (доля «поддался» красным), сессии, рекорды, ачивки игры.
+- **Уточнения по ходу:** «за день» — тот же экран с периодом «Сегодня» (без графика); ачивки «за неделю/месяц» не вводили — это рекорды (как и планировали).
+
+### 18.5.7 Фаза C1 — сделано (2026-11-06)
+
+- **Бэк:** миграция `0011_sport` (`exercises` с `measure` и уникальным `lower(name)`, `workouts`, `workout_exercises` — упражнение `RESTRICT`,
+  `workout_sets` с `reps`/`weight`/`seconds`). Модуль `internal/sport` (`/api/sport`). Чистое (table-driven): `ValidateSet` (по мере: weight — повторы и вес,
+  reps — повторы + необязательный доп. вес, time — секунды + необязательный вес; лишнее поле — ошибка), `Tonnage`, `WorkoutInput.Normalize`, `ExerciseName`.
+  API: `GET /workouts?from=&to=` (по умолчанию текущая неделя), `GET/POST/PUT/DELETE /workouts[/{id}]` (PUT заменяет упражнения и подходы),
+  `GET /titles?q=`, `GET /exercises?q=` (частые сверху, `uses`, `lastDay`, `lastSets` — подходы из самой свежей тренировки),
+  `PATCH /exercises/{id}` (имя; мера — только если все записанные подходы подходят, иначе 400 `measure_conflict`), `DELETE /exercises/{id}` (409 `exercise_in_use`).
+  Упражнение в тренировке — по имени без учёта регистра (get-or-create); мера нужна только новому, у существующего расхождение — 400 `measure_conflict`.
+  Бэкап: необязательная секция `sport {exercises, workouts (с exercises → sets)}`, подходы проверяются `ValidateSet`; «Очистить всё» чистит и спорт.
+- **Фронт:** раздел «Спорт» (иконка-гантель) — «Тренировки» и «Упражнения» («Еда» и «Статистика» — в C2). «Тренировки» (`#/sport/workouts[/<понедельник>]`):
+  неделя Пн..Вс, сегодня — бледно-зелёный, в днях — тренировки (с ккал), «+» в прошедших днях, листание недель (в будущее — нельзя);
+  под неделей — форма: название (подсказки), дата, мин, ккал, «как прошла», упражнения (автодополнение из справочника; знакомое — мера из справочника
+  и подходы из прошлого раза, пока их не трогали; новое — выбор меры), подходы по мере («+ подход» копирует предыдущий), живой тоннаж.
+  «Упражнения»: поиск, переименование по клику, смена меры, удаление неиспользованного, «прошлый раз» в строке.
+  Чистое (vitest): `lib/sport` — `initialSets`, `nextSet`, `findExercise`, `toSet`, `toInput`, `draftTonnage`.
+- **Доработка 2026-11-06 по отзыву Danik («не могу писать в блоках; нужны подходы, повторы, вес; время не нужно»):**
+  - Баг ввода: эффект заполнения формы читал `entries` и перезапускался на каждое нажатие клавиши, стирая ввод. Теперь эффект читает только
+    `workout` и `day`.
+  - **Модель упроще:** упражнение в тренировке — одна строка `подходы × повторы × вес` (вес необязателен — подтягивания). Миграция `0012_sport_simple`:
+    в `workout_exercises` — `sets 1..50`, `reps 1..10000`, `weight 0..1000 | NULL`; `workout_sets` и `exercises.measure` удалены
+    (на момент миграции данных не было; правило переноса — число подходов, повторы и вес первого подхода, на время → 1 повтор — проверено на копии).
+    API: `exercises: [{name, sets, reps, weight}]`; справочник — `last: {sets, reps, weight} | null` («как в прошлый раз»), `PATCH /exercises/{id} {name}`.
+    Чистое: `EntryInput.Normalize`, `Tonnage(sets, reps, weight)`. Бэкап: `sport.workouts[].exercises: [{exerciseId, sets, reps, weight}]`.
+  - **Страница:** неделя сверху; клик по дню — выбрать его для новой тренировки, клик по тренировке — правка; форма всегда видна
+    («Добавить тренировку» → появляется в неделе): название (подсказки), дата, «Как прошла?», блок «С часов» (длительность, сожжено ккал),
+    упражнения таблицей «Упражнение · Подходы · Повторы · Вес» (по умолчанию 3 × 10; знакомое — «как в прошлый раз», подсказка под именем).
+  - **Итоги недели** под формой (`lib/sport.weekSummary`, vitest): тренировок, сожжено ккал (и в среднем), время, поднято (кг / т) и средние на тренировку
+    (по тем, где значение есть); таблица по дням (тренировок, ккал, мин, тоннаж + итого и среднее); упражнения (раз, подходов, повторов, макс. вес, тоннаж).
+- **Уточнения по ходу:** номера миграций сдвинуты (`0011` — спорт, `0012` — упрощение упражнений, `0013` — еда); тренировка без упражнений допустима (просто бег с ккал);
+  поля формы — строки, вес принимает «62,5»; новые коды: `invalid_set`, `invalid_measure`, `measure_conflict`, `invalid_exercise_name`,
+  `invalid_duration`, `invalid_kcal`, `duplicate_exercise`, `exercise_in_use`.
+
+### 18.5.8 Фаза C2 — сделано (2026-11-06). Блок C и весь план v3 закрыты.
+
+- **Бэк:** миграция `0013_meals` (`meals (day, position, text 1..200, kcal 0..10000 | NULL)`, `UNIQUE (day, position)`). В модуле `sport`:
+  `GET/PUT /api/sport/meals/{day}` → `{day, meals, eatenKcal, burnedKcal}` (PUT заменяет список, пустые пункты выбрасываются, будущее — `future_day`),
+  `GET /api/sport/meals/suggest?q=` (частые сверху, ккал — из самой свежей записи), `GET /api/sport/stats?from=&to=` (по умолчанию 7 дней),
+  `GET /api/sport/exercises/{id}/progress?from=&to=` (по умолчанию полгода). Чистое (table-driven): `NormalizeMeals`, `SumKcal`,
+  `Summarize` (все дни окна; `eatenKcal: null` — еду не записывали, а не 0; средние — только по тем, где значение есть; упражнения по тоннажу),
+  `Progress` (по дням: макс. вес, тоннаж, подходы, повторы). Бэкап: `sport.meals` (в файлах C1 ключа нет — пусто).
+- **Фронт:** «Спорт» — Тренировки · Еда · Упражнения · Статистика. «Еда» (`#/sport/food[/<день>]`): листание дней, «что съел» с подсказками
+  (выбрал знакомое — ккал подставились), правка прямо в строке (пустой текст — удалить), плитки «Съедено» / «Сожжено на тренировках» — рядом,
+  без «баланса» (C4). «Статистика»: 7 / 30 дней — плитки (тренировок и дней с ними, сожжено и в среднем на тренировку, съедено в день, время, тоннаж),
+  столбики «съедено / сожжено» по дням, таблица по дням (итого и «в день»), упражнения (клик → прогресс). «Упражнения» → `#/sport/exercises/<id>`:
+  график прогресса — макс. вес линией, тоннаж столбиками (без веса — повторы за день). Чистое (vitest): `lib/sport.findMeal`, `sumKcal`.
+- **Уточнения по ходу:** статистика — последние 7 / 30 дней (как у «Дня» и «Игры»), а не календарная неделя — календарная уже есть в «Итогах недели»
+  на «Тренировках»; 1ПМ и цель ккал не делали (C5, C6); Apple Health — не делали (оценка в §18.4 в силе).
+
+### 18.6 Открытые вопросы (сводка)
+
+> Все приняты по рекомендации 2026-11-05 — оставлено для истории.
+
+
+- ❓ A1 порядок подгрупп — по имени · A2 глубина — 3 · A4 тренировка — всегда поддерево · A5 «повторена» — сама/предок или due=0 ·
+  A6 путь в теге: создаёт, конфликт → `group_path_conflict` · A7 удаление: по умолчанию «поднять» · A9 stats/ачивка по своим словам.
+- ❓ B1 колонки — свои списки + фильтр по типу · B2 модули tasks + focus · B3 дедлайн необязателен · B6 лимит — предупреждение ·
+  B8 без автопереноса · B9 чек-лист на фронте · B10 настройка не блокируется · B11 done/stopped/abandoned · B12 перерасход перерыва разрешён ·
+  B14 +1 очко за 30 мин чистой работы, без бонуса за дело · B15 покупка → дофамин (галочка) · B16 ачивки игры через eventbus.
+- ❓ C1 подразделы · C2 `measure` weight/reps/time · C3 подстановка из прошлого раза · C4 ккал рядом без баланса · C5 цели ккал — нет ·
+  C6 1ПМ — нет · C7 название тренировки — свободный текст с подсказками.
+- ❓ G1 отдельная очистка игры/спорта — нет.

@@ -94,3 +94,28 @@ func NormalizeDopamine(slot int, text string) (string, error) {
 	}
 	return text, nil
 }
+
+// FirstFreeSlot — наименьший незанятый квадратик дофамина; все заняты — false.
+func FirstFreeSlot(used []int) (int, bool) {
+	busy := make([]bool, DopamineSlots)
+	for _, u := range used {
+		if u >= 0 && u < DopamineSlots {
+			busy[u] = true
+		}
+	}
+	for i, b := range busy {
+		if !b {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// TruncateDopamine — trim и обрезка до MaxDopamineLen символов (по рунам, а не байтам).
+func TruncateDopamine(text string) string {
+	text = strings.TrimSpace(text)
+	if r := []rune(text); len(r) > MaxDopamineLen {
+		text = strings.TrimSpace(string(r[:MaxDopamineLen]))
+	}
+	return text
+}

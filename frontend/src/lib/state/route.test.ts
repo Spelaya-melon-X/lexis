@@ -13,6 +13,13 @@ describe('parseHash', () => {
     { hash: '#/day', want: { section: 'day', page: 'entry', rest: '' } },
     { hash: '#/day/entry/2026-11-03', want: { section: 'day', page: 'entry', rest: '2026-11-03' } },
     { hash: '#/habits/notes', want: { section: 'habits', page: 'notes', rest: '' } },
+    { hash: '#/game', want: { section: 'game', page: 'plan', rest: '' } },
+    { hash: '#/sport', want: { section: 'sport', page: 'workouts', rest: '' } },
+    { hash: '#/sport/workouts/2026-11-02', want: { section: 'sport', page: 'workouts', rest: '2026-11-02' } },
+    { hash: '#/sport/exercises/7', want: { section: 'sport', page: 'exercises', rest: '7' } },
+    { hash: '#/game/plan/2026-11-06', want: { section: 'game', page: 'plan', rest: '2026-11-06' } },
+    { hash: '#/game/board/7', want: { section: 'game', page: 'board', rest: '7' } },
+    { hash: '#/game/settings', want: { section: 'game', page: 'settings', rest: '' } },
     { hash: '#/settings', want: { section: 'settings', page: 'general', rest: '' } },
     { hash: '#/settings/data', want: { section: 'settings', page: 'data', rest: '' } },
     // чужой/неизвестный подраздел → первый в разделе, хвост не переносим

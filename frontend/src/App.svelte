@@ -3,9 +3,11 @@
   import { fade, fly } from 'svelte/transition'
   import { api } from './lib/api/client'
   import type { Locale } from './lib/api/types'
+  import FocusPill from './lib/components/FocusPill.svelte'
   import Icon from './lib/components/Icon.svelte'
   import Toaster from './lib/components/Toaster.svelte'
   import { errorText, i18n, t } from './lib/i18n/i18n.svelte'
+  import { focus } from './lib/state/focus.svelte'
   import { reminders } from './lib/state/reminders.svelte'
   import { route } from './lib/state/route.svelte'
   import { toasts } from './lib/state/toasts.svelte'
@@ -17,6 +19,7 @@
   // Язык: источник правды — /api/settings; localStorage (внутри i18n) — для первого кадра.
   onMount(async () => {
     reminders.start()
+    focus.start()
     try {
       i18n.locale = (await api.settings.get()).language
     } catch (e) {
@@ -61,6 +64,8 @@
         </a>
       {/each}
     </nav>
+
+    <FocusPill />
 
     <a
       href={route.sectionHref('settings')}

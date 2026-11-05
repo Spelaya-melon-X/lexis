@@ -85,7 +85,17 @@ func (s *Service) snapshot(ctx context.Context, q *store.Queries) (Snapshot, err
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("count archived groups: %w", err)
 	}
+	tasksDone, err := q.CountDoneTasks(ctx)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("count done tasks: %w", err)
+	}
+	workSec, err := q.FocusWorkSec(ctx)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("focus work: %w", err)
+	}
 	return Snapshot{
+		TasksDone:      int(tasksDone),
+		FocusHours:     int(workSec / 3600),
 		Sessions:       int(sessions),
 		BestStreak:     stats.Streaks(finished, s.clock.Now()).Best,
 		Learned:        int(learned),
@@ -127,7 +137,7 @@ func (s *Service) List(ctx context.Context) ([]Achievement, error) {
 // ничего не теряется, следующая проверка (событие или GET) догонит.
 func (s *Service) onEvent(ctx context.Context, e eventbus.Event) {
 	switch e.(type) {
-	case eventbus.SessionFinished, eventbus.WordLevelChanged:
+	case eventbus.SessionFinished, eventbus.WordLevelChanged, eventbus.FocusFinished, eventbus.TaskCompleted:
 		if _, err := s.Check(ctx); err != nil {
 			slog.ErrorContext(ctx, "achievements: check on event", "event", fmt.Sprintf("%T", e), "err", err)
 		}

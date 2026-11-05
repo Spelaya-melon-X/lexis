@@ -35,11 +35,45 @@ type DopamineSlot struct {
 	UpdatedAt time.Time
 }
 
+type Exercise struct {
+	ID        int64
+	Name      string
+	CreatedAt time.Time
+}
+
+type FocusBreak struct {
+	ID        int64
+	SessionID int64
+	StartedAt time.Time
+	EndedAt   *time.Time
+}
+
+type FocusDistraction struct {
+	ID        int64
+	SessionID int64
+	At        time.Time
+	Trigger   string
+	GaveIn    bool
+}
+
+type FocusSession struct {
+	ID            int64
+	TaskID        *int64
+	TaskTitle     string
+	Day           time.Time
+	PlannedBlocks int16
+	StartedAt     time.Time
+	WorkStartedAt *time.Time
+	FinishedAt    *time.Time
+	Outcome       *string
+}
+
 type Group struct {
 	ID        int64
 	Name      string
 	Color     *string
 	CreatedAt time.Time
+	ParentID  *int64
 }
 
 type Habit struct {
@@ -84,6 +118,33 @@ type HabitNote struct {
 	UpdatedAt time.Time
 }
 
+type Meal struct {
+	ID        int64
+	Day       time.Time
+	Position  int16
+	Text      string
+	Kcal      *int32
+	CreatedAt time.Time
+}
+
+type PlanItem struct {
+	Day      time.Time
+	TaskID   int64
+	Position int16
+	Blocks   int16
+	StartMin int16
+}
+
+type PointsLedger struct {
+	ID             int64
+	At             time.Time
+	Delta          int32
+	Kind           string
+	Title          string
+	FocusSessionID *int64
+	RewardID       *int64
+}
+
 type Review struct {
 	ID             int64
 	SessionID      int64
@@ -95,9 +156,55 @@ type Review struct {
 	AnsweredAt     time.Time
 }
 
+type Reward struct {
+	ID         int64
+	Title      string
+	Price      int32
+	Position   int32
+	ArchivedAt *time.Time
+	CreatedAt  time.Time
+}
+
+type RitualItem struct {
+	ID       int64
+	Text     string
+	Position int32
+}
+
 type Setting struct {
 	Key   string
 	Value []byte
+}
+
+type Task struct {
+	ID         int64
+	Title      string
+	Blocks     int16
+	Importance int16
+	Deadline   *time.Time
+	TypeID     *int64
+	ColumnID   int64
+	Position   int32
+	Note       string
+	DoneAt     *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	ParentID   *int64
+}
+
+type TaskColumn struct {
+	ID        int64
+	Name      string
+	Position  int32
+	CreatedAt time.Time
+}
+
+type TaskType struct {
+	ID        int64
+	Name      string
+	Color     *string
+	Position  int32
+	CreatedAt time.Time
 }
 
 type TrainingSession struct {
@@ -151,4 +258,25 @@ type WordExample struct {
 type WordGroup struct {
 	WordID  int64
 	GroupID int64
+}
+
+type Workout struct {
+	ID          int64
+	Day         time.Time
+	Title       string
+	Notes       string
+	DurationMin *int32
+	Kcal        *int32
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type WorkoutExercise struct {
+	ID         int64
+	WorkoutID  int64
+	ExerciseID int64
+	Position   int16
+	Sets       int16
+	Reps       int32
+	Weight     *float64
 }

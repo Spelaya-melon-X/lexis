@@ -16,11 +16,16 @@ WHERE lower(term) = lower(@term) AND lower(translation) = lower(@translation);
 SELECT * FROM words WHERE id = $1;
 
 -- name: ListWords :many
--- Фильтры необязательные: NULL → без фильтра.
+-- Фильтры необязательные: NULL → без фильтра. subtree — слова группы и всех её потомков (§18.2).
+WITH RECURSIVE sub (id) AS (
+    SELECT sqlc.narg(group_id)::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id WHERE @subtree::bool
+)
 SELECT w.* FROM words w
 WHERE (sqlc.narg(level)::smallint IS NULL OR w.level = sqlc.narg(level))
   AND (sqlc.narg(group_id)::bigint IS NULL OR EXISTS (
-        SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id = sqlc.narg(group_id)))
+        SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub)))
 ORDER BY w.created_at DESC, w.id DESC;
 
 -- name: UpdateWordText :exec
@@ -53,13 +58,17 @@ SELECT word_id, sentence FROM word_examples
 WHERE word_id = ANY(@word_ids::bigint[])
 ORDER BY word_id, position;
 
--- name: InsertGroup :one
-INSERT INTO groups (name, created_at) VALUES (@name, @now)
-ON CONFLICT DO NOTHING
-RETURNING id;
+-- name: LockTree :exec
+-- Та же блокировка, что у groups (tree.LockKey): создание групп по пути читает всё дерево.
+SELECT pg_advisory_xact_lock(@key::bigint);
 
--- name: GetGroupIDByName :one
-SELECT id FROM groups WHERE name = $1;
+-- name: ListGroupNodes :many
+SELECT id, name, parent_id FROM groups;
+
+-- name: InsertGroup :one
+-- Существование проверено по дереву под блокировкой, поэтому без ON CONFLICT.
+INSERT INTO groups (name, parent_id, created_at) VALUES (@name, sqlc.narg(parent_id), @now)
+RETURNING id;
 
 -- name: AddWordGroup :exec
 INSERT INTO word_groups (word_id, group_id) VALUES (@word_id, @group_id)

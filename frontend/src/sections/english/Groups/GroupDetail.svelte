@@ -1,7 +1,7 @@
 <script lang="ts">
   import { latest } from '../../../lib/async'
   import { api } from '../../../lib/api/client'
-  import type { GroupDetail, Range, Word } from '../../../lib/api/types'
+  import type { Group, GroupChildren, GroupDetail, Range, Word } from '../../../lib/api/types'
   import Button from '../../../lib/components/Button.svelte'
   import Card from '../../../lib/components/Card.svelte'
   import ConfirmDialog from '../../../lib/components/ConfirmDialog.svelte'
@@ -12,12 +12,23 @@
   import { route } from '../../../lib/state/route.svelte'
   import { toasts } from '../../../lib/state/toasts.svelte'
   import ColorPicker from '../../../lib/components/ColorPicker.svelte'
+  import { pathTo } from '../../../lib/groupTree'
   import ProductivityChart from './ProductivityChart.svelte'
   import WordEditDialog from './WordEditDialog.svelte'
   import WordRow from './WordRow.svelte'
 
   // onchanged — после любой правки: список слева пересчитывает due/уровни/имя.
-  let { id, onchanged }: { id: number; onchanged: () => void } = $props()
+  // groups — всё дерево (из списка слева): хлебные крошки и подгруппы; onmove — «Переместить в…».
+  interface Props {
+    id: number
+    groups: Group[]
+    onchanged: () => void
+    onmove: (g: Group) => void
+  }
+  let { id, groups, onchanged, onmove }: Props = $props()
+
+  const ancestors = $derived(pathTo(groups, id).slice(0, -1))
+  const childCount = $derived(groups.filter((g) => g.parentId === id).length)
 
   let detail = $state<GroupDetail | null>(null)
   let loadError = $state<string | null>(null)
@@ -27,6 +38,7 @@
   let nameDraft = $state('')
   let confirmDeleteGroup = $state(false)
   let deletingGroup = $state(false)
+  let deleteChildren = $state<GroupChildren>('lift')
 
   let editing = $state<Word | null>(null)
   let deletingWord = $state<Word | null>(null)
@@ -81,7 +93,7 @@
   async function deleteGroup() {
     deletingGroup = true
     try {
-      await api.groups.remove(id)
+      await api.groups.remove(id, deleteChildren)
       toasts.success(t('groups.deleted'))
       onchanged()
       route.go('english', 'groups')
@@ -135,6 +147,11 @@
   <div class="detail scroll">
     <header class="head">
       <a class="back" href="#/english/groups">← {t('groups.back')}</a>
+      {#if ancestors.length > 0}
+        <nav class="crumbs muted" aria-label={t('groups.parent')}>
+          {#each ancestors as a (a.id)}<a href="#/english/groups/{a.id}">#{a.name}</a><span aria-hidden="true">›</span>{/each}
+        </nav>
+      {/if}
       {#if renaming}
         <form class="rename" onsubmit={rename}>
           <!-- svelte-ignore a11y_autofocus -->
@@ -155,7 +172,9 @@
         <Button variant="primary" icon="play" disabled={g.wordCount === 0} onclick={() => route.go('english', 'training', String(g.id))}>
           {t('groups.train')}
         </Button>
-        <Button variant="ghost" icon="trash" aria-label={t('groups.delete')} title={t('groups.delete')} onclick={() => (confirmDeleteGroup = true)} />
+        <Button variant="ghost" icon="folder" aria-label={t('groups.move')} title={t('groups.move')} onclick={() => onmove(g)} />
+        <Button variant="ghost" icon="trash" aria-label={t('groups.delete')} title={t('groups.delete')}
+          onclick={() => { deleteChildren = 'lift'; confirmDeleteGroup = true }} />
       </div>
     </header>
 
@@ -186,7 +205,10 @@
     </div>
 
     <Card padding="none">
-      <h3 class="words-title">{t('groups.wordsTitle')} <span class="muted">· {detail.words.length}</span></h3>
+      <h3 class="words-title">
+        {t('groups.wordsTitle')} <span class="muted">· {detail.words.length}</span>
+        {#if childCount > 0}<small class="muted">{t('groups.subtreeHint')}</small>{/if}
+      </h3>
       {#if detail.words.length === 0}
         <p class="muted empty">{t('groups.wordsEmpty')}</p>
       {:else}
@@ -201,7 +223,16 @@
 
   <ConfirmDialog open={confirmDeleteGroup} title={t('groups.deleteTitle', { name: g.name })} danger
     confirmText={t('common.delete')} loading={deletingGroup} onconfirm={deleteGroup} oncancel={() => (confirmDeleteGroup = false)}>
-    {t('groups.deleteBody')}
+    {#if childCount > 0}
+      <fieldset class="children">
+        <legend>{t('groups.deleteChildren', { count: childCount })}</legend>
+        <label><input type="radio" bind:group={deleteChildren} value="lift" /> {t('groups.deleteLift')}</label>
+        <label><input type="radio" bind:group={deleteChildren} value="delete" /> {t('groups.deleteSubtree')}</label>
+      </fieldset>
+      {t('groups.deleteBodyTree')}
+    {:else}
+      {t('groups.deleteBody')}
+    {/if}
   </ConfirmDialog>
 {/if}
 
@@ -240,6 +271,44 @@
     color: var(--c-muted);
     text-decoration: none;
     font-weight: 600;
+  }
+  .crumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+    width: 100%;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  .crumbs a {
+    color: inherit;
+  }
+  .crumbs a:hover {
+    color: var(--c-text);
+  }
+  .children {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    margin: 0 0 var(--s-3);
+    padding: 0;
+    border: 0;
+    color: var(--c-text);
+  }
+  .children legend {
+    margin-bottom: var(--s-1);
+    padding: 0;
+    font-weight: 600;
+  }
+  .children label {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .words-title small {
+    margin-left: var(--s-2);
+    font-size: var(--fs-xs);
+    font-weight: 400;
   }
   .title {
     display: flex;

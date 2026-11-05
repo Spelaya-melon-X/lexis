@@ -89,6 +89,34 @@ func (s *Service) SetDopamine(ctx context.Context, dayS string, slot int, text s
 	})
 }
 
+// AddDopamine записывает text в первый свободный квадратик сегодняшнего дня (покупка награды
+// в «Игре», §18.3 B15). Все 7 заняты — ничего не пишет и возвращает false: это не ошибка.
+// Слишком длинный текст обрезается — название награды не обязано влезать в 140 символов.
+func (s *Service) AddDopamine(ctx context.Context, text string) (bool, error) {
+	text = TruncateDopamine(text)
+	added := false
+	_, err := s.write(ctx, clock.FormatDate(clock.TodayDate(s.clock)), func(q *store.Queries, day time.Time) error {
+		slots, err := q.ListDopamine(ctx, day)
+		if err != nil {
+			return fmt.Errorf("list dopamine: %w", err)
+		}
+		used := make([]int, len(slots))
+		for i, sl := range slots {
+			used[i] = int(sl.Slot)
+		}
+		slot, ok := FirstFreeSlot(used)
+		if !ok {
+			return nil
+		}
+		added = true
+		return q.UpsertDopamine(ctx, store.UpsertDopamineParams{Day: day, Slot: int16(slot), Text: text, Now: s.clock.Now()})
+	})
+	if err != nil {
+		return false, fmt.Errorf("add dopamine: %w", err)
+	}
+	return added, nil
+}
+
 // write — общий каркас записи: проверка даты, строка дня (EnsureDay — FK для пунктов и
 // квадратиков), изменения и чтение итога в одной транзакции.
 func (s *Service) write(ctx context.Context, dayS string, fn func(q *store.Queries, day time.Time) error) (Day, error) {

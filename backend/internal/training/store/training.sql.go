@@ -256,17 +256,21 @@ func (q *Queries) ListLevelChanges(ctx context.Context, sessionID int64) ([]List
 }
 
 const listSessionWords = `-- name: ListSessionWords :many
+WITH RECURSIVE sub (id) AS (
+    SELECT $3::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
 SELECT w.id, w.term, w.forms, w.translation, w.level, w.next_review_at
 FROM words w
-JOIN word_groups wg ON wg.word_id = w.id
-WHERE wg.group_id = $1
-  AND ($2::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < $3)))
+WHERE EXISTS (SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub))
+  AND ($1::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < $2)))
 `
 
 type ListSessionWordsParams struct {
-	GroupID int64
 	Free    bool
 	DayEnd  time.Time
+	GroupID int64
 }
 
 type ListSessionWordsRow struct {
@@ -279,9 +283,10 @@ type ListSessionWordsRow struct {
 }
 
 // Кандидаты в сессию. Обычная: не архив и (новое или due до конца сегодняшнего дня);
-// free: все слова группы. Раскладку по корзинам делает training.Build.
+// free: все слова группы. Группа — с поддеревом (§18.2); EXISTS, а не JOIN, — чтобы слово
+// из двух подгрупп пришло один раз. Раскладку по корзинам делает training.Build.
 func (q *Queries) ListSessionWords(ctx context.Context, arg ListSessionWordsParams) ([]ListSessionWordsRow, error) {
-	rows, err := q.db.Query(ctx, listSessionWords, arg.GroupID, arg.Free, arg.DayEnd)
+	rows, err := q.db.Query(ctx, listSessionWords, arg.Free, arg.DayEnd, arg.GroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +370,12 @@ func (q *Queries) UpdateWordSRS(ctx context.Context, arg UpdateWordSRSParams) er
 }
 
 const wordInGroup = `-- name: WordInGroup :one
-SELECT EXISTS (SELECT 1 FROM word_groups WHERE word_id = $1 AND group_id = $2)
+WITH RECURSIVE sub (id) AS (
+    SELECT $2::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
+)
+SELECT EXISTS (SELECT 1 FROM word_groups WHERE word_id = $1 AND group_id IN (SELECT id FROM sub))
 `
 
 type WordInGroupParams struct {
@@ -373,6 +383,7 @@ type WordInGroupParams struct {
 	GroupID int64
 }
 
+// Слово в группе или любой её подгруппе.
 func (q *Queries) WordInGroup(ctx context.Context, arg WordInGroupParams) (bool, error) {
 	row := q.db.QueryRow(ctx, wordInGroup, arg.WordID, arg.GroupID)
 	var exists bool

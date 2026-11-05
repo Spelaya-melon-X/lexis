@@ -55,17 +55,6 @@ func (q *Queries) DeleteWordGroups(ctx context.Context, wordID int64) error {
 	return err
 }
 
-const getGroupIDByName = `-- name: GetGroupIDByName :one
-SELECT id FROM groups WHERE name = $1
-`
-
-func (q *Queries) GetGroupIDByName(ctx context.Context, name string) (int64, error) {
-	row := q.db.QueryRow(ctx, getGroupIDByName, name)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
-}
-
 const getWord = `-- name: GetWord :one
 SELECT id, term, forms, translation, level, streak, next_review_at, last_reviewed_at, last_good_at, created_at FROM words WHERE id = $1
 `
@@ -127,18 +116,19 @@ func (q *Queries) InsertExample(ctx context.Context, arg InsertExampleParams) (i
 }
 
 const insertGroup = `-- name: InsertGroup :one
-INSERT INTO groups (name, created_at) VALUES ($1, $2)
-ON CONFLICT DO NOTHING
+INSERT INTO groups (name, parent_id, created_at) VALUES ($1, $2, $3)
 RETURNING id
 `
 
 type InsertGroupParams struct {
-	Name string
-	Now  time.Time
+	Name     string
+	ParentID *int64
+	Now      time.Time
 }
 
+// Существование проверено по дереву под блокировкой, поэтому без ON CONFLICT.
 func (q *Queries) InsertGroup(ctx context.Context, arg InsertGroupParams) (int64, error) {
-	row := q.db.QueryRow(ctx, insertGroup, arg.Name, arg.Now)
+	row := q.db.QueryRow(ctx, insertGroup, arg.Name, arg.ParentID, arg.Now)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -206,6 +196,36 @@ func (q *Queries) ListExamplesByWordIDs(ctx context.Context, wordIds []int64) ([
 	return items, nil
 }
 
+const listGroupNodes = `-- name: ListGroupNodes :many
+SELECT id, name, parent_id FROM groups
+`
+
+type ListGroupNodesRow struct {
+	ID       int64
+	Name     string
+	ParentID *int64
+}
+
+func (q *Queries) ListGroupNodes(ctx context.Context) ([]ListGroupNodesRow, error) {
+	rows, err := q.db.Query(ctx, listGroupNodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupNodesRow
+	for rows.Next() {
+		var i ListGroupNodesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ParentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGroupsByWordIDs = `-- name: ListGroupsByWordIDs :many
 SELECT wg.word_id, g.id, g.name FROM word_groups wg
 JOIN groups g ON g.id = wg.group_id
@@ -240,21 +260,27 @@ func (q *Queries) ListGroupsByWordIDs(ctx context.Context, wordIds []int64) ([]L
 }
 
 const listWords = `-- name: ListWords :many
+WITH RECURSIVE sub (id) AS (
+    SELECT $2::bigint
+    UNION ALL
+    SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id WHERE $3::bool
+)
 SELECT w.id, w.term, w.forms, w.translation, w.level, w.streak, w.next_review_at, w.last_reviewed_at, w.last_good_at, w.created_at FROM words w
 WHERE ($1::smallint IS NULL OR w.level = $1)
   AND ($2::bigint IS NULL OR EXISTS (
-        SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id = $2))
+        SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub)))
 ORDER BY w.created_at DESC, w.id DESC
 `
 
 type ListWordsParams struct {
 	Level   *int16
 	GroupID *int64
+	Subtree bool
 }
 
-// Фильтры необязательные: NULL → без фильтра.
+// Фильтры необязательные: NULL → без фильтра. subtree — слова группы и всех её потомков (§18.2).
 func (q *Queries) ListWords(ctx context.Context, arg ListWordsParams) ([]Word, error) {
-	rows, err := q.db.Query(ctx, listWords, arg.Level, arg.GroupID)
+	rows, err := q.db.Query(ctx, listWords, arg.Level, arg.GroupID, arg.Subtree)
 	if err != nil {
 		return nil, err
 	}
@@ -282,6 +308,16 @@ func (q *Queries) ListWords(ctx context.Context, arg ListWordsParams) ([]Word, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockTree = `-- name: LockTree :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+// Та же блокировка, что у groups (tree.LockKey): создание групп по пути читает всё дерево.
+func (q *Queries) LockTree(ctx context.Context, key int64) error {
+	_, err := q.db.Exec(ctx, lockTree, key)
+	return err
 }
 
 const nextExamplePosition = `-- name: NextExamplePosition :one

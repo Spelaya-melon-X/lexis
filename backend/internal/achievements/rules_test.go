@@ -31,6 +31,9 @@ func TestEvaluate(t *testing.T) {
 		{"learned 100", Snapshot{Learned: 100}, []Code{Learned10, Learned50, Learned100}},
 		{"learned 500", Snapshot{Learned: 777}, []Code{Learned10, Learned50, Learned100, Learned500}},
 		{"archived group", Snapshot{ArchivedGroups: 2}, []Code{FirstArchivedGroup}},
+		{"game: 9 tasks → none", Snapshot{TasksDone: 9}, nil},
+		{"game: 50 tasks", Snapshot{TasksDone: 50}, []Code{GameTasks10, GameTasks50}},
+		{"game: 200 hours", Snapshot{FocusHours: 250}, []Code{GameHours10, GameHours50, GameHours200}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +65,7 @@ func TestEvaluate_Progress(t *testing.T) {
 			t.Errorf("%s: got %d/%d, want %d/%d", tt.code, p.Progress, p.Target, tt.progress, tt.target)
 		}
 	}
-	if len(ps) != 9 || ps[0].Code != FirstSession || ps[8].Code != FirstArchivedGroup {
+	if len(ps) != 15 || ps[0].Code != FirstSession || ps[8].Code != FirstArchivedGroup || ps[14].Code != GameHours200 {
 		t.Errorf("order/count: %+v", ps)
 	}
 }

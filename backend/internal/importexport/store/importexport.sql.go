@@ -165,9 +165,128 @@ func (q *Queries) ListAllExamples(ctx context.Context) ([]ListAllExamplesRow, er
 	return items, nil
 }
 
+const listAllExercises = `-- name: ListAllExercises :many
+
+SELECT id, name, created_at FROM exercises ORDER BY id
+`
+
+// Раздел «Спорт» (§18.4): в бэкапе v3 — секция sport.
+func (q *Queries) ListAllExercises(ctx context.Context) ([]Exercise, error) {
+	rows, err := q.db.Query(ctx, listAllExercises)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Exercise
+	for rows.Next() {
+		var i Exercise
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllFocusBreaks = `-- name: ListAllFocusBreaks :many
+SELECT id, session_id, started_at, ended_at FROM focus_breaks ORDER BY session_id, started_at, id
+`
+
+func (q *Queries) ListAllFocusBreaks(ctx context.Context) ([]FocusBreak, error) {
+	rows, err := q.db.Query(ctx, listAllFocusBreaks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FocusBreak
+	for rows.Next() {
+		var i FocusBreak
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.StartedAt,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllFocusDistractions = `-- name: ListAllFocusDistractions :many
+SELECT id, session_id, at, trigger, gave_in FROM focus_distractions ORDER BY session_id, at, id
+`
+
+func (q *Queries) ListAllFocusDistractions(ctx context.Context) ([]FocusDistraction, error) {
+	rows, err := q.db.Query(ctx, listAllFocusDistractions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FocusDistraction
+	for rows.Next() {
+		var i FocusDistraction
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.At,
+			&i.Trigger,
+			&i.GaveIn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllFocusSessions = `-- name: ListAllFocusSessions :many
+SELECT id, task_id, task_title, day, planned_blocks, started_at, work_started_at, finished_at, outcome FROM focus_sessions ORDER BY id
+`
+
+func (q *Queries) ListAllFocusSessions(ctx context.Context) ([]FocusSession, error) {
+	rows, err := q.db.Query(ctx, listAllFocusSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FocusSession
+	for rows.Next() {
+		var i FocusSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.TaskTitle,
+			&i.Day,
+			&i.PlannedBlocks,
+			&i.StartedAt,
+			&i.WorkStartedAt,
+			&i.FinishedAt,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllGroups = `-- name: ListAllGroups :many
 
-SELECT id, name, color, created_at FROM groups ORDER BY id
+SELECT id, name, color, created_at, parent_id FROM groups ORDER BY id
 `
 
 // Запросы модуля importexport: полный бэкап, восстановление, очистка базы.
@@ -185,6 +304,7 @@ func (q *Queries) ListAllGroups(ctx context.Context) ([]Group, error) {
 			&i.Name,
 			&i.Color,
 			&i.CreatedAt,
+			&i.ParentID,
 		); err != nil {
 			return nil, err
 		}
@@ -296,6 +416,99 @@ func (q *Queries) ListAllHabits(ctx context.Context) ([]Habit, error) {
 	return items, nil
 }
 
+const listAllMeals = `-- name: ListAllMeals :many
+SELECT id, day, position, text, kcal, created_at FROM meals ORDER BY day, position
+`
+
+func (q *Queries) ListAllMeals(ctx context.Context) ([]Meal, error) {
+	rows, err := q.db.Query(ctx, listAllMeals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Meal
+	for rows.Next() {
+		var i Meal
+		if err := rows.Scan(
+			&i.ID,
+			&i.Day,
+			&i.Position,
+			&i.Text,
+			&i.Kcal,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllPlanItems = `-- name: ListAllPlanItems :many
+SELECT day, task_id, position, blocks, start_min FROM plan_items ORDER BY day, position
+`
+
+func (q *Queries) ListAllPlanItems(ctx context.Context) ([]PlanItem, error) {
+	rows, err := q.db.Query(ctx, listAllPlanItems)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PlanItem
+	for rows.Next() {
+		var i PlanItem
+		if err := rows.Scan(
+			&i.Day,
+			&i.TaskID,
+			&i.Position,
+			&i.Blocks,
+			&i.StartMin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllPoints = `-- name: ListAllPoints :many
+SELECT id, at, delta, kind, title, focus_session_id, reward_id FROM points_ledger ORDER BY id
+`
+
+func (q *Queries) ListAllPoints(ctx context.Context) ([]PointsLedger, error) {
+	rows, err := q.db.Query(ctx, listAllPoints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PointsLedger
+	for rows.Next() {
+		var i PointsLedger
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Delta,
+			&i.Kind,
+			&i.Title,
+			&i.FocusSessionID,
+			&i.RewardID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllReviews = `-- name: ListAllReviews :many
 SELECT id, session_id, word_id, answer, first_in_session, level_before, level_after, answered_at FROM reviews ORDER BY id
 `
@@ -322,6 +535,63 @@ func (q *Queries) ListAllReviews(ctx context.Context) ([]Review, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllRewards = `-- name: ListAllRewards :many
+SELECT id, title, price, position, archived_at, created_at FROM rewards ORDER BY id
+`
+
+func (q *Queries) ListAllRewards(ctx context.Context) ([]Reward, error) {
+	rows, err := q.db.Query(ctx, listAllRewards)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Reward
+	for rows.Next() {
+		var i Reward
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Price,
+			&i.Position,
+			&i.ArchivedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllRitual = `-- name: ListAllRitual :many
+
+SELECT text FROM ritual_items ORDER BY position, id
+`
+
+// Фокус и награды (B4) — тоже секция game.
+func (q *Queries) ListAllRitual(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAllRitual)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, err
+		}
+		items = append(items, text)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -379,6 +649,105 @@ func (q *Queries) ListAllSettings(ctx context.Context) ([]Setting, error) {
 	for rows.Next() {
 		var i Setting
 		if err := rows.Scan(&i.Key, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTaskColumns = `-- name: ListAllTaskColumns :many
+SELECT id, name, position, created_at FROM task_columns ORDER BY id
+`
+
+func (q *Queries) ListAllTaskColumns(ctx context.Context) ([]TaskColumn, error) {
+	rows, err := q.db.Query(ctx, listAllTaskColumns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskColumn
+	for rows.Next() {
+		var i TaskColumn
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Position,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTaskTypes = `-- name: ListAllTaskTypes :many
+
+SELECT id, name, color, position, created_at FROM task_types ORDER BY id
+`
+
+// Раздел «Игра в жизнь» (§18.1): в бэкапе v3 — секция game.
+func (q *Queries) ListAllTaskTypes(ctx context.Context) ([]TaskType, error) {
+	rows, err := q.db.Query(ctx, listAllTaskTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskType
+	for rows.Next() {
+		var i TaskType
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Color,
+			&i.Position,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllTasks = `-- name: ListAllTasks :many
+SELECT id, title, blocks, importance, deadline, type_id, column_id, position, note, done_at, created_at, updated_at, parent_id FROM tasks ORDER BY id
+`
+
+func (q *Queries) ListAllTasks(ctx context.Context) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listAllTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Blocks,
+			&i.Importance,
+			&i.Deadline,
+			&i.TypeID,
+			&i.ColumnID,
+			&i.Position,
+			&i.Note,
+			&i.DoneAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ParentID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -533,6 +902,71 @@ func (q *Queries) ListAllWords(ctx context.Context) ([]Word, error) {
 	return items, nil
 }
 
+const listAllWorkoutExercises = `-- name: ListAllWorkoutExercises :many
+SELECT id, workout_id, exercise_id, position, sets, reps, weight FROM workout_exercises ORDER BY workout_id, position
+`
+
+func (q *Queries) ListAllWorkoutExercises(ctx context.Context) ([]WorkoutExercise, error) {
+	rows, err := q.db.Query(ctx, listAllWorkoutExercises)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkoutExercise
+	for rows.Next() {
+		var i WorkoutExercise
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkoutID,
+			&i.ExerciseID,
+			&i.Position,
+			&i.Sets,
+			&i.Reps,
+			&i.Weight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllWorkouts = `-- name: ListAllWorkouts :many
+SELECT id, day, title, notes, duration_min, kcal, created_at, updated_at FROM workouts ORDER BY id
+`
+
+func (q *Queries) ListAllWorkouts(ctx context.Context) ([]Workout, error) {
+	rows, err := q.db.Query(ctx, listAllWorkouts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workout
+	for rows.Next() {
+		var i Workout
+		if err := rows.Scan(
+			&i.ID,
+			&i.Day,
+			&i.Title,
+			&i.Notes,
+			&i.DurationMin,
+			&i.Kcal,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const restoreAchievement = `-- name: RestoreAchievement :exec
 INSERT INTO achievements (code, unlocked_at) VALUES ($1, $2)
 `
@@ -576,6 +1010,69 @@ type RestoreExamplesParams struct {
 	WordID   int64
 	Position int16
 	Sentence string
+}
+
+const restoreExercise = `-- name: RestoreExercise :one
+INSERT INTO exercises (name, created_at) VALUES ($1, $2)
+RETURNING id
+`
+
+type RestoreExerciseParams struct {
+	Name      string
+	CreatedAt time.Time
+}
+
+func (q *Queries) RestoreExercise(ctx context.Context, arg RestoreExerciseParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreExercise, arg.Name, arg.CreatedAt)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+type RestoreFocusBreaksParams struct {
+	SessionID int64
+	StartedAt time.Time
+	EndedAt   *time.Time
+}
+
+type RestoreFocusDistractionsParams struct {
+	SessionID int64
+	At        time.Time
+	Trigger   string
+	GaveIn    bool
+}
+
+const restoreFocusSession = `-- name: RestoreFocusSession :one
+INSERT INTO focus_sessions (task_id, task_title, day, planned_blocks, started_at, work_started_at, finished_at, outcome)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id
+`
+
+type RestoreFocusSessionParams struct {
+	TaskID        *int64
+	TaskTitle     string
+	Day           time.Time
+	PlannedBlocks int16
+	StartedAt     time.Time
+	WorkStartedAt *time.Time
+	FinishedAt    *time.Time
+	Outcome       *string
+}
+
+func (q *Queries) RestoreFocusSession(ctx context.Context, arg RestoreFocusSessionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreFocusSession,
+		arg.TaskID,
+		arg.TaskTitle,
+		arg.Day,
+		arg.PlannedBlocks,
+		arg.StartedAt,
+		arg.WorkStartedAt,
+		arg.FinishedAt,
+		arg.Outcome,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const restoreGroup = `-- name: RestoreGroup :one
@@ -649,6 +1146,31 @@ type RestoreHabitNotesParams struct {
 	UpdatedAt time.Time
 }
 
+type RestoreMealsParams struct {
+	Day       time.Time
+	Position  int16
+	Text      string
+	Kcal      *int32
+	CreatedAt time.Time
+}
+
+type RestorePlanItemsParams struct {
+	Day      time.Time
+	TaskID   int64
+	Position int16
+	Blocks   int16
+	StartMin int16
+}
+
+type RestorePointsParams struct {
+	At             time.Time
+	Delta          int32
+	Kind           string
+	Title          string
+	FocusSessionID *int64
+	RewardID       *int64
+}
+
 type RestoreReviewsParams struct {
 	SessionID      int64
 	WordID         int64
@@ -657,6 +1179,37 @@ type RestoreReviewsParams struct {
 	LevelBefore    int16
 	LevelAfter     int16
 	AnsweredAt     time.Time
+}
+
+const restoreReward = `-- name: RestoreReward :one
+INSERT INTO rewards (title, price, position, archived_at, created_at) VALUES ($1, $2, $3, $4, $5)
+RETURNING id
+`
+
+type RestoreRewardParams struct {
+	Title      string
+	Price      int32
+	Position   int32
+	ArchivedAt *time.Time
+	CreatedAt  time.Time
+}
+
+func (q *Queries) RestoreReward(ctx context.Context, arg RestoreRewardParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreReward,
+		arg.Title,
+		arg.Price,
+		arg.Position,
+		arg.ArchivedAt,
+		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+type RestoreRitualParams struct {
+	Text     string
+	Position int32
 }
 
 const restoreSession = `-- name: RestoreSession :one
@@ -708,6 +1261,88 @@ type RestoreSettingParams struct {
 func (q *Queries) RestoreSetting(ctx context.Context, arg RestoreSettingParams) error {
 	_, err := q.db.Exec(ctx, restoreSetting, arg.Key, arg.Value)
 	return err
+}
+
+const restoreTask = `-- name: RestoreTask :one
+INSERT INTO tasks (title, blocks, importance, deadline, type_id, column_id, position, note, done_at, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id
+`
+
+type RestoreTaskParams struct {
+	Title      string
+	Blocks     int16
+	Importance int16
+	Deadline   *time.Time
+	TypeID     *int64
+	ColumnID   int64
+	Position   int32
+	Note       string
+	DoneAt     *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// По одной, а не COPY: для ссылок на родителя нужны новые id.
+func (q *Queries) RestoreTask(ctx context.Context, arg RestoreTaskParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreTask,
+		arg.Title,
+		arg.Blocks,
+		arg.Importance,
+		arg.Deadline,
+		arg.TypeID,
+		arg.ColumnID,
+		arg.Position,
+		arg.Note,
+		arg.DoneAt,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const restoreTaskColumn = `-- name: RestoreTaskColumn :one
+INSERT INTO task_columns (name, position, created_at) VALUES ($1, $2, $3)
+RETURNING id
+`
+
+type RestoreTaskColumnParams struct {
+	Name      string
+	Position  int32
+	CreatedAt time.Time
+}
+
+func (q *Queries) RestoreTaskColumn(ctx context.Context, arg RestoreTaskColumnParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreTaskColumn, arg.Name, arg.Position, arg.CreatedAt)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const restoreTaskType = `-- name: RestoreTaskType :one
+INSERT INTO task_types (name, color, position, created_at) VALUES ($1, $2, $3, $4)
+RETURNING id
+`
+
+type RestoreTaskTypeParams struct {
+	Name      string
+	Color     *string
+	Position  int32
+	CreatedAt time.Time
+}
+
+func (q *Queries) RestoreTaskType(ctx context.Context, arg RestoreTaskTypeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreTaskType,
+		arg.Name,
+		arg.Color,
+		arg.Position,
+		arg.CreatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 type RestoreWeekBlocksParams struct {
@@ -769,6 +1404,76 @@ type RestoreWordGroupsParams struct {
 	GroupID int64
 }
 
+const restoreWorkout = `-- name: RestoreWorkout :one
+INSERT INTO workouts (day, title, notes, duration_min, kcal, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id
+`
+
+type RestoreWorkoutParams struct {
+	Day         time.Time
+	Title       string
+	Notes       string
+	DurationMin *int32
+	Kcal        *int32
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (q *Queries) RestoreWorkout(ctx context.Context, arg RestoreWorkoutParams) (int64, error) {
+	row := q.db.QueryRow(ctx, restoreWorkout,
+		arg.Day,
+		arg.Title,
+		arg.Notes,
+		arg.DurationMin,
+		arg.Kcal,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+type RestoreWorkoutExercisesParams struct {
+	WorkoutID  int64
+	ExerciseID int64
+	Position   int16
+	Sets       int16
+	Reps       int32
+	Weight     *float64
+}
+
+const setGroupParent = `-- name: SetGroupParent :exec
+UPDATE groups SET parent_id = $1 WHERE id = $2
+`
+
+type SetGroupParentParams struct {
+	ParentID *int64
+	ID       int64
+}
+
+// Родителей ставим вторым проходом, когда все группы уже вставлены: порядок в файле не важен.
+func (q *Queries) SetGroupParent(ctx context.Context, arg SetGroupParentParams) error {
+	_, err := q.db.Exec(ctx, setGroupParent, arg.ParentID, arg.ID)
+	return err
+}
+
+const setTaskParent = `-- name: SetTaskParent :exec
+UPDATE tasks SET parent_id = $1 WHERE id = $2
+`
+
+type SetTaskParentParams struct {
+	ParentID *int64
+	ID       int64
+}
+
+// Вторым проходом, как у групп: родитель может стоять в файле позже шага.
+func (q *Queries) SetTaskParent(ctx context.Context, arg SetTaskParentParams) error {
+	_, err := q.db.Exec(ctx, setTaskParent, arg.ParentID, arg.ID)
+	return err
+}
+
 const truncateData = `-- name: TruncateData :exec
 TRUNCATE words, word_examples, groups, word_groups, training_sessions, reviews, achievements RESTART IDENTITY
 `
@@ -776,6 +1481,16 @@ TRUNCATE words, word_examples, groups, word_groups, training_sessions, reviews, 
 // Всё, кроме settings (§12: очистка базы сохраняет язык и лимит). RESTART IDENTITY — id снова с 1.
 func (q *Queries) TruncateData(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, truncateData)
+	return err
+}
+
+const truncateGame = `-- name: TruncateGame :exec
+TRUNCATE task_types, task_columns, tasks, plan_items, ritual_items, focus_sessions, focus_breaks, focus_distractions, rewards, points_ledger RESTART IDENTITY
+`
+
+// Только если в файле есть секция game (как habits, §17.10).
+func (q *Queries) TruncateGame(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, truncateGame)
 	return err
 }
 
@@ -796,5 +1511,15 @@ TRUNCATE days, day_wins, dopamine_slots, week_reviews, week_review_blocks RESTAR
 // Только если в файле есть секция journal: старый бэкап (v1) дневник не трогает (§17.10).
 func (q *Queries) TruncateJournal(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, truncateJournal)
+	return err
+}
+
+const truncateSport = `-- name: TruncateSport :exec
+TRUNCATE exercises, workouts, workout_exercises, meals RESTART IDENTITY
+`
+
+// Только если в файле есть секция sport (как habits, §17.10).
+func (q *Queries) TruncateSport(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, truncateSport)
 	return err
 }

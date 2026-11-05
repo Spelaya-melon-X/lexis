@@ -36,6 +36,19 @@ func (m *Module) get(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (m *Module) create(w http.ResponseWriter, r *http.Request) error {
+	var p CreateParams
+	if err := httpx.Decode(w, r, &p); err != nil {
+		return err
+	}
+	g, err := m.svc.Create(r.Context(), p)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusCreated, g)
+	return nil
+}
+
 func (m *Module) update(w http.ResponseWriter, r *http.Request) error {
 	id, err := groupID(r)
 	if err != nil {
@@ -53,12 +66,17 @@ func (m *Module) update(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// delete — DELETE /api/groups/:id?children=lift|delete (по умолчанию lift).
 func (m *Module) delete(w http.ResponseWriter, r *http.Request) error {
 	id, err := groupID(r)
 	if err != nil {
 		return err
 	}
-	if err := m.svc.Delete(r.Context(), id); err != nil {
+	children := Children(r.URL.Query().Get("children"))
+	if children == "" {
+		children = ChildrenLift
+	}
+	if err := m.svc.Delete(r.Context(), id, children); err != nil {
 		return err
 	}
 	httpx.NoContent(w)

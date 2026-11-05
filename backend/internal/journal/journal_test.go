@@ -125,3 +125,33 @@ func TestFillDays(t *testing.T) {
 		t.Errorf("inverted window must be empty: %+v", got)
 	}
 }
+
+func TestFirstFreeSlot(t *testing.T) {
+	tests := []struct {
+		used []int
+		want int
+		ok   bool
+	}{
+		{nil, 0, true},
+		{[]int{0, 1, 3}, 2, true},
+		{[]int{1, 2, 3, 4, 5, 6}, 0, true},
+		{[]int{0, 1, 2, 3, 4, 5, 6}, 0, false},
+		{[]int{0, 0, 9, -1}, 1, true}, // мусор и повторы не мешают
+	}
+	for _, tt := range tests {
+		got, ok := FirstFreeSlot(tt.used)
+		if got != tt.want || ok != tt.ok {
+			t.Errorf("FirstFreeSlot(%v) = %d %v, want %d %v", tt.used, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestTruncateDopamine(t *testing.T) {
+	long := strings.Repeat("я", MaxDopamineLen+10)
+	if got := TruncateDopamine("  " + long); len([]rune(got)) != MaxDopamineLen {
+		t.Errorf("len = %d", len([]rune(got)))
+	}
+	if got := TruncateDopamine(" кино "); got != "кино" {
+		t.Errorf("got %q", got)
+	}
+}

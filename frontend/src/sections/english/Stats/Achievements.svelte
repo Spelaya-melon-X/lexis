@@ -7,7 +7,15 @@
   let { items }: { items: Achievement[] } = $props()
 
   const icon = (code: string): IconName =>
-    code.startsWith('streak_') ? 'flame' : code === 'first_archived_group' ? 'archive' : 'trophy'
+    code.startsWith('streak_')
+      ? 'flame'
+      : code === 'first_archived_group'
+        ? 'archive'
+        : code.startsWith('game_tasks_')
+          ? 'check'
+          : code.startsWith('game_hours_')
+            ? 'clock'
+            : 'trophy'
 
   // Код пришёл с бэка — если текста ещё нет в словаре (новая ачивка), показываем код, а не ломаемся.
   const text = (code: string, part: 'title' | 'desc') => {

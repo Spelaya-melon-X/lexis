@@ -29,6 +29,20 @@ func (q *Queries) CountArchivedGroups(ctx context.Context) (int32, error) {
 	return column_1, err
 }
 
+const countDoneTasks = `-- name: CountDoneTasks :one
+
+SELECT count(*)::int FROM tasks WHERE done_at IS NOT NULL
+`
+
+// «Игра» (§18.3, B5).
+// done_at бывает только у листьев (выполненность родителя вычисляется), так что это «закрытые дела-шаги».
+func (q *Queries) CountDoneTasks(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countDoneTasks)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countFinishedSessions = `-- name: CountFinishedSessions :one
 
 SELECT count(*)::int FROM training_sessions WHERE finished_at IS NOT NULL
@@ -49,6 +63,23 @@ SELECT count(*)::int FROM words WHERE level >= 4
 func (q *Queries) CountLearned(ctx context.Context) (int32, error) {
 	row := q.db.QueryRow(ctx, countLearned)
 	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const focusWorkSec = `-- name: FocusWorkSec :one
+SELECT COALESCE(sum(GREATEST(0, extract(epoch FROM s.finished_at - s.work_started_at) - COALESCE(b.sec, 0))), 0)::bigint
+FROM focus_sessions s
+LEFT JOIN (SELECT session_id, sum(extract(epoch FROM ended_at - started_at)) AS sec
+           FROM focus_breaks WHERE ended_at IS NOT NULL GROUP BY session_id) b ON b.session_id = s.id
+WHERE s.finished_at IS NOT NULL AND s.work_started_at IS NOT NULL AND s.outcome <> 'abandoned'
+`
+
+// Чистая работа во всех завершённых сессиях (кроме отменённых): от «начал делать» до конца минус перерывы.
+// Перерывы завершённой сессии всегда закрыты (Finish закрывает открытый) — их длина известна.
+func (q *Queries) FocusWorkSec(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, focusWorkSec)
+	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
 }

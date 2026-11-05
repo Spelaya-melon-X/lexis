@@ -19,7 +19,17 @@ import HabitsCheck from './habits/Check/Check.svelte'
 import HabitsGoals from './habits/Goals/Goals.svelte'
 import HabitsManage from './habits/Manage/Manage.svelte'
 import HabitsNotes from './habits/Notes/Notes.svelte'
+import GameBoard from './game/Board/Board.svelte'
+import GameFocus from './game/Focus/Focus.svelte'
+import GamePlan from './game/Plan/Plan.svelte'
+import GameShop from './game/Shop/Shop.svelte'
+import GameStats from './game/Stats/Stats.svelte'
+import GameSettings from './game/Settings/Settings.svelte'
 import SettingsData from './settings/Data.svelte'
+import SportExercises from './sport/Exercises/Exercises.svelte'
+import SportFood from './sport/Food/Food.svelte'
+import SportStats from './sport/Stats/Stats.svelte'
+import SportWorkouts from './sport/Workouts/Workouts.svelte'
 import SettingsGeneral from './settings/General.svelte'
 
 export interface PageDef {
@@ -66,6 +76,28 @@ const NAV: { [S in Section]: SectionDef<S> } = {
       goals: { icon: 'target', label: 'nav.habits.goals', view: HabitsGoals },
       notes: { icon: 'note', label: 'nav.habits.notes', view: HabitsNotes },
       manage: { icon: 'list', label: 'nav.habits.manage', view: HabitsManage },
+    },
+  },
+  game: {
+    icon: 'gamepad',
+    label: 'nav.section.game',
+    pages: {
+      plan: { icon: 'clock', label: 'nav.game.plan', view: GamePlan },
+      board: { icon: 'board', label: 'nav.game.board', view: GameBoard },
+      focus: { icon: 'target', label: 'nav.game.focus', view: GameFocus },
+      shop: { icon: 'trophy', label: 'nav.game.shop', view: GameShop },
+      stats: { icon: 'chart', label: 'nav.game.stats', view: GameStats },
+      settings: { icon: 'settings', label: 'nav.game.settings', view: GameSettings },
+    },
+  },
+  sport: {
+    icon: 'dumbbell',
+    label: 'nav.section.sport',
+    pages: {
+      workouts: { icon: 'week', label: 'nav.sport.workouts', view: SportWorkouts },
+      food: { icon: 'note', label: 'nav.sport.food', view: SportFood },
+      exercises: { icon: 'list', label: 'nav.sport.exercises', view: SportExercises },
+      stats: { icon: 'chart', label: 'nav.sport.stats', view: SportStats },
     },
   },
   settings: {

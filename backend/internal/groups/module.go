@@ -1,4 +1,5 @@
-// Package groups — список групп со статусом дня, аналитика группы, переименование/цвет/удаление.
+// Package groups — дерево групп (§18.2): список со статусом дня, аналитика по поддереву,
+// создание, переименование/цвет/перенос, удаление.
 package groups
 
 import (
@@ -26,6 +27,7 @@ func (m *Module) Name() string { return "groups" }
 
 func (m *Module) Routes(r chi.Router) {
 	r.Get("/", httpx.Handle(m.list))
+	r.Post("/", httpx.Handle(m.create))
 	r.Get("/{id}", httpx.Handle(m.get))
 	r.Patch("/{id}", httpx.Handle(m.update))
 	r.Delete("/{id}", httpx.Handle(m.delete))
