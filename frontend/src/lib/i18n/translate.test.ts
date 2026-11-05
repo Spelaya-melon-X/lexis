@@ -71,7 +71,7 @@ describe('has', () => {
   })
 })
 
-// Словари должны совпадать по ключам — иначе в одном из языков вылезет «tabs.add» вместо текста.
+// Словари должны совпадать по ключам — иначе в одном из языков вылезет «nav.english.add» вместо текста.
 describe('dictionaries', () => {
   it('ru and en have the same keys', () => {
     expect(leafKeys(en as Dict)).toEqual(leafKeys(ru as Dict))

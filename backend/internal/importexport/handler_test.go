@@ -57,6 +57,7 @@ func TestHandler_BadRequests(t *testing.T) {
 		{"export bad format", req{http.MethodGet, "/api/data/export?format=xml", &bytes.Buffer{}, ""}, 400, "invalid_format"},
 		{"reset without confirm", req{http.MethodPost, "/api/data/reset", bytes.NewBufferString(`{}`), "application/json"}, 400, "confirm_required"},
 		{"reset confirm false", req{http.MethodPost, "/api/data/reset", bytes.NewBufferString(`{"confirm":false}`), "application/json"}, 400, "confirm_required"},
+		{"reset bad scope", req{http.MethodPost, "/api/data/reset", bytes.NewBufferString(`{"confirm":true,"scope":"words"}`), "application/json"}, 400, "invalid_scope"},
 		{"reset no body", req{http.MethodPost, "/api/data/reset", &bytes.Buffer{}, ""}, 400, "invalid_json"},
 	}
 	for _, tt := range tests {

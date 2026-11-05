@@ -99,11 +99,13 @@ func (m *Module) export(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// reset — POST /api/data/reset {"confirm": true}. Флаг — защита от случайного вызова
-// (curl без тела, ошибка во фронте); подтверждение пользователя — на фронте.
+// reset — POST /api/data/reset {"confirm": true, "scope"?: "english" | "all"}. Флаг — защита
+// от случайного вызова (curl без тела, ошибка во фронте); подтверждение пользователя — на фронте.
+// Без scope — только английский (как до v2: старые клиенты не сотрут дневник).
 func (m *Module) reset(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
-		Confirm bool `json:"confirm"`
+		Confirm bool   `json:"confirm"`
+		Scope   string `json:"scope"`
 	}
 	if err := httpx.Decode(w, r, &req); err != nil {
 		return err
@@ -111,7 +113,10 @@ func (m *Module) reset(w http.ResponseWriter, r *http.Request) error {
 	if !req.Confirm {
 		return httpx.BadRequest("confirm_required", `body must be {"confirm": true}`)
 	}
-	if err := m.svc.Reset(r.Context()); err != nil {
+	if req.Scope == "" {
+		req.Scope = ScopeEnglish
+	}
+	if err := m.svc.Reset(r.Context(), req.Scope); err != nil {
 		return err
 	}
 	httpx.NoContent(w)

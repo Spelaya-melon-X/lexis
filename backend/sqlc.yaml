@@ -5,13 +5,21 @@ version: "2"
 # Новый модуль = скопировать блок, поменять queries/out.
 
 # Общие для всех модулей маппинги типов: по умолчанию pgx/v5 даёт pgtype.Timestamptz,
-# а в бизнес-коде удобнее time.Time (и *time.Time для NULL).
+# а в бизнес-коде удобнее time.Time (и *time.Time для NULL). То же для date.
 overrides:
   go:
     overrides:
       - db_type: "timestamptz"
         go_type: "time.Time"
       - db_type: "timestamptz"
+        nullable: true
+        go_type:
+          type: "time.Time"
+          pointer: true
+      # DATE — календарная дата как time.Time в 00:00 UTC (SPEC §17.7, clock.DateOf).
+      - db_type: "date"
+        go_type: "time.Time"
+      - db_type: "date"
         nullable: true
         go_type:
           type: "time.Time"
@@ -85,5 +93,25 @@ sql:
       go:
         package: store
         out: internal/importexport/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/journal.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/journal/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/habits.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/habits/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true

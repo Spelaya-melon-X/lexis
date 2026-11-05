@@ -76,3 +76,17 @@ describe('bars', () => {
     expect(slotCenter(3, 4, b)).toBe(87.5)
   })
 })
+
+describe('bars with a fixed scale', () => {
+  const box = { width: 100, height: 70, padX: 0, padY: 0 }
+  it('scales to scaleMax, not to the data maximum', () => {
+    const b = bars([2, 7, 0], box, 0, 7)
+    expect(b.map((x) => x.h)).toEqual([20, 70])
+  })
+  it('clamps values above scaleMax', () => {
+    expect(bars([14], box, 0, 7)[0]!.h).toBe(70)
+  })
+  it('without scaleMax keeps relative scaling', () => {
+    expect(bars([2, 4], box, 0).map((x) => x.h)).toEqual([35, 70])
+  })
+})
