@@ -7,6 +7,7 @@
   import { i18n, t } from '../../../lib/i18n/i18n.svelte'
   import { deadlineState } from '../../../lib/tasks'
   import { blocksText, blocksTextSec } from '../format'
+  import TaskTags from './TaskTags.svelte'
 
   interface Props {
     task: Task
@@ -71,6 +72,7 @@
     <span class="pill imp" class:high={task.importance >= 8} title={t('game.importanceShort', { n: task.importance })}>★ {task.importance}</span>
     {#if task.deadline}<span class="pill due {due}">{dueText}</span>{/if}
   </div>
+  <TaskTags note={task.note} />
   <div class="acts">
     {@render act('chevronLeft', t('game.moveLeft'), () => onside(-1), !canLeft)}
     <!-- «вверх» — тот же шеврон, повёрнутый стилем: отдельной иконки не держим -->

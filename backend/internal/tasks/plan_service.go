@@ -35,6 +35,7 @@ type TopItem struct {
 // Plan — ответ GET/PUT /api/tasks/plan/{day}.
 type Plan struct {
 	Day         string     `json:"day"`
+	Today       string     `json:"today"`
 	Editable    bool       `json:"editable"` // прошлые дни — только чтение
 	Items       []PlanItem `json:"items"`
 	TotalBlocks int        `json:"totalBlocks"`
@@ -47,9 +48,13 @@ var errPastDay = httpx.BadRequest("past_day", "a past day plan is read-only")
 
 // Plan — план дня + топ-5 и «не доделал» (для сегодня и будущих дней).
 func (s *Service) Plan(ctx context.Context, dayS string) (Plan, error) {
-	day, err := days.Parse(dayS)
-	if err != nil {
-		return Plan{}, err
+	day := clock.TodayDate(s.clock)
+	if dayS != "today" {
+		var err error
+		day, err = days.Parse(dayS)
+		if err != nil {
+			return Plan{}, err
+		}
 	}
 	p, err := s.plan(ctx, store.New(s.pool), day)
 	if err != nil {
@@ -68,8 +73,9 @@ func (s *Service) plan(ctx context.Context, q *store.Queries, day time.Time) (Pl
 		return Plan{}, fmt.Errorf("plan items: %w", err)
 	}
 	settings := loadSettings(ctx, q)
+	today := clock.TodayDate(s.clock)
 	p := Plan{
-		Day: clock.FormatDate(day), Editable: !day.Before(clock.TodayDate(s.clock)), Settings: settings,
+		Day: clock.FormatDate(day), Today: clock.FormatDate(today), Editable: !day.Before(today), Settings: settings,
 		Items: make([]PlanItem, 0, len(rows)), Top: []TopItem{}, Leftovers: []Task{},
 	}
 	planned := make(map[int64]bool, len(rows))
@@ -118,19 +124,14 @@ func (s *Service) plan(ctx context.Context, q *store.Queries, day time.Time) (Pl
 // SavePlan заменяет план дня целиком. В план можно добавить только невыполненный лист;
 // дело, выполненное уже после планирования, в своём дне остаётся.
 func (s *Service) SavePlan(ctx context.Context, dayS string, in PlanInput) (Plan, error) {
-	day, err := days.Parse(dayS)
+	day, err := s.writableDay(dayS)
 	if err != nil {
 		return Plan{}, err
-	}
-	if day.Before(clock.TodayDate(s.clock)) {
-		return Plan{}, errPastDay
 	}
 	if err := in.Normalize(); err != nil {
 		return Plan{}, err
 	}
-	var p Plan
-	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		q := store.New(tx)
+	return s.changePlan(ctx, day, func(q *store.Queries) error {
 		sn, err := loadSnapshot(ctx, q)
 		if err != nil {
 			return err
@@ -166,11 +167,124 @@ func (s *Service) SavePlan(ctx context.Context, dayS string, in PlanInput) (Plan
 				return fmt.Errorf("insert plan item: %w", err)
 			}
 		}
+		return nil
+	})
+}
+
+// AddPlanTask добавляет открытый лист в свободный слот текущего плана.
+func (s *Service) AddPlanTask(ctx context.Context, dayS string, taskID int64) (Plan, error) {
+	day, err := s.writableDay(dayS)
+	if err != nil {
+		return Plan{}, err
+	}
+	if taskID <= 0 {
+		return Plan{}, httpx.BadRequest("invalid_task", "taskId must be a positive id")
+	}
+	return s.changePlan(ctx, day, func(q *store.Queries) error {
+		task, err := q.GetTaskForUpdate(ctx, taskID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.BadRequest("invalid_task", "task not found")
+		}
+		if err != nil {
+			return fmt.Errorf("lock task: %w", err)
+		}
+		hasChildren, err := q.HasChildren(ctx, taskID)
+		if err != nil {
+			return fmt.Errorf("check task children: %w", err)
+		}
+		if hasChildren {
+			return httpx.BadRequest("task_not_leaf", "a task with steps cannot be planned: plan its steps")
+		}
+		if task.DoneAt != nil {
+			return httpx.BadRequest("task_done", "a done task cannot be added to a plan")
+		}
+		return s.appendPlanItem(ctx, q, day, task.ID, int(task.Blocks))
+	})
+}
+
+// CreatePlanTask создаёт дело в выбранной колонке и добавляет его в план одной транзакцией.
+func (s *Service) CreatePlanTask(ctx context.Context, dayS string, in TaskInput) (Plan, error) {
+	day, err := s.writableDay(dayS)
+	if err != nil {
+		return Plan{}, err
+	}
+	f, err := in.Normalize()
+	if err != nil {
+		return Plan{}, err
+	}
+	return s.changePlan(ctx, day, func(q *store.Queries) error {
+		task, err := s.createTask(ctx, q, in.ColumnID, f)
+		if err != nil {
+			return err
+		}
+		return s.appendPlanItem(ctx, q, day, task.ID, task.Blocks)
+	})
+}
+
+func (s *Service) appendPlanItem(ctx context.Context, q *store.Queries, day time.Time, taskID int64, blocks int) error {
+	rows, err := q.ListPlanItems(ctx, day)
+	if err != nil {
+		return fmt.Errorf("plan items: %w", err)
+	}
+	slots := make([]PlanItemInput, 0, len(rows))
+	for _, row := range rows {
+		if row.TaskID == taskID {
+			return httpx.Conflict("plan_task_exists", "task is already planned for this day")
+		}
+		slots = append(slots, PlanItemInput{TaskID: row.TaskID, Start: int(row.StartMin), Blocks: int(row.Blocks)})
+	}
+	if len(slots) >= MaxPlanItems {
+		return httpx.BadRequest("too_many_items", fmt.Sprintf("a day plan has at most %d items", MaxPlanItems))
+	}
+	settings := loadSettings(ctx, q)
+	from := settings.DayStart
+	now := s.clock.Now()
+	if day.Equal(clock.DateOf(now)) {
+		nowMin := ((now.Hour()*60 + now.Minute() + BlockMin - 1) / BlockMin) * BlockMin
+		from = max(from, min(nowMin, settings.DayEnd-BlockMin))
+	}
+	start, ok := firstFree(slots, blocks, from, settings.DayEnd)
+	if !ok {
+		return httpx.BadRequest("plan_no_slot", "no free slot for the task")
+	}
+	if err := q.InsertPlanItem(ctx, store.InsertPlanItemParams{
+		Day: day, TaskID: taskID, Position: int16(len(rows)), Blocks: int16(blocks), StartMin: int16(start),
+	}); err != nil {
+		return fmt.Errorf("insert plan item: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) writableDay(dayS string) (time.Time, error) {
+	day, err := days.Parse(dayS)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if day.Before(clock.TodayDate(s.clock)) {
+		return time.Time{}, errPastDay
+	}
+	return day, nil
+}
+
+func (s *Service) changePlan(ctx context.Context, day time.Time, change func(*store.Queries) error) (Plan, error) {
+	var p Plan
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := store.New(tx)
+		if err := q.LockPlanDay(ctx, day); err != nil {
+			return fmt.Errorf("lock plan day: %w", err)
+		}
+		if day.Before(clock.TodayDate(s.clock)) {
+			return errPastDay
+		}
+		if err := change(q); err != nil {
+			return err
+		}
+		var err error
 		p, err = s.plan(ctx, q, day)
 		return err
 	})
 	if err != nil {
-		return Plan{}, fmt.Errorf("save plan %s: %w", dayS, err)
+		return Plan{}, fmt.Errorf("save plan %s: %w", clock.FormatDate(day), err)
 	}
 	return p, nil
 }

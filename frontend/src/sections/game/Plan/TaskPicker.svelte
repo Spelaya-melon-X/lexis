@@ -2,33 +2,38 @@
   // «+ Любое дело» (§18.3, B3): поиск по всем открытым делам-листьям, которых ещё нет в плане.
   import { api } from '../../../lib/api/client'
   import type { Task } from '../../../lib/api/types'
+  import { latest } from '../../../lib/async'
   import Button from '../../../lib/components/Button.svelte'
   import Modal from '../../../lib/components/Modal.svelte'
   import Spinner from '../../../lib/components/Spinner.svelte'
-  import { errorText, t } from '../../../lib/i18n/i18n.svelte'
+  import { longDay } from '../../../lib/dates'
+  import { errorText, i18n, t } from '../../../lib/i18n/i18n.svelte'
   import { ancestors } from '../../../lib/tasks'
   import { blocksText } from '../format'
 
   interface Props {
     open: boolean
+    day?: string
     planned: Set<number> // уже в плане — не предлагаем
     onclose: () => void
     onpick: (task: Task) => void
   }
-  let { open, planned, onclose, onpick }: Props = $props()
+  let { open, day, planned, onclose, onpick }: Props = $props()
 
   let all = $state<Task[] | null>(null)
   let error = $state<string | null>(null)
   let query = $state('')
+  const fetchTasks = latest(() => api.tasks.list('false'))
 
   $effect(() => {
     if (!open) return
     query = ''
     all = null
-    api.tasks
-      .list('false')
-      .then((ts) => (all = ts))
+    error = null
+    void fetchTasks()
+      .then((r) => { if (!r.stale) all = r.value })
       .catch((e: unknown) => (error = errorText(e)))
+    return fetchTasks.cancel
   })
 
   const found = $derived.by(() => {
@@ -37,7 +42,7 @@
   })
 </script>
 
-<Modal {open} title={t('game.plan.pickTitle')} width={520} {onclose}>
+<Modal {open} title={day ? t('game.calendar.add', { date: longDay(day, i18n.locale) }) : t('game.plan.pickTitle')} width={520} {onclose}>
   <!-- svelte-ignore a11y_autofocus -->
   <input class="input search" bind:value={query} placeholder={t('game.plan.pickSearch')} aria-label={t('game.plan.pickSearch')} autofocus />
   {#if error && !all}

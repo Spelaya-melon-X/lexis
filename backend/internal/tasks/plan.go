@@ -149,6 +149,28 @@ type PlanInput struct {
 	Items []PlanItemInput `json:"items"`
 }
 
+// firstFree ищет место по получасам до конца шкалы. Если его нет, пробует
+// поставить дело после последнего пункта, с учётом границы суток.
+func firstFree(items []PlanItemInput, blocks, from, to int) (int, bool) {
+	duration := blocks * BlockMin
+	free := func(start int) bool {
+		return !slices.ContainsFunc(items, func(item PlanItemInput) bool {
+			return start < item.Start+item.Blocks*BlockMin && item.Start < start+duration
+		})
+	}
+	for start := from; start+duration <= to; start += BlockMin {
+		if free(start) {
+			return start, true
+		}
+	}
+	start := from
+	for _, item := range items {
+		start = max(start, item.Start+item.Blocks*BlockMin)
+	}
+	start = min(start, 24*60-duration)
+	return start, free(start)
+}
+
 // Normalize проверяет форму плана: дела по разу, объём 1..40, начало — по получасам и дело
 // целиком в сутках, пункты не пересекаются (при перетаскивании фронт меняет их местами, §18.3).
 // Что дела существуют и это невыполненные листья — проверяет сервис.

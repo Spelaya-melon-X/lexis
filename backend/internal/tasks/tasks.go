@@ -175,7 +175,6 @@ func (f Fields) check() (Fields, error) {
 	if f.TypeID != nil && *f.TypeID <= 0 {
 		return f, httpx.BadRequest("invalid_type", "typeId must be a positive id or null")
 	}
-	f.Note = strings.TrimSpace(f.Note)
 	if utf8.RuneCountInString(f.Note) > MaxNoteLen {
 		return f, httpx.BadRequest("text_too_long", fmt.Sprintf("note is longer than %d characters", MaxNoteLen))
 	}

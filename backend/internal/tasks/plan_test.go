@@ -7,6 +7,32 @@ import (
 	"time"
 )
 
+func TestFirstFree(t *testing.T) {
+	plan := []PlanItemInput{{TaskID: 1, Start: 540, Blocks: 2}, {TaskID: 2, Start: 660, Blocks: 2}}
+	for _, tc := range []struct {
+		name             string
+		items            []PlanItemInput
+		blocks, from, to int
+		want             int
+		found            bool
+	}{
+		{"fits in gap", plan, 2, 540, 1380, 600, true},
+		{"too long for gap", plan, 3, 540, 1380, 720, true},
+		{"respects earliest start", plan, 1, 630, 1380, 630, true},
+		{"half hour in gap", plan, 1, 540, 1380, 600, true},
+		{"after configured end", plan, 4, 540, 780, 720, true},
+		{"empty plan", nil, 2, 540, 1380, 540, true},
+		{"hits midnight", []PlanItemInput{{Start: 1200, Blocks: 8}}, 2, 1200, 1380, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start, ok := firstFree(tc.items, tc.blocks, tc.from, tc.to)
+			if ok != tc.found || ok && start != tc.want {
+				t.Errorf("firstFree = %d, %v; want %d, %v", start, ok, tc.want, tc.found)
+			}
+		})
+	}
+}
+
 func date(s string) *time.Time {
 	d, err := time.Parse(time.DateOnly, s)
 	if err != nil {

@@ -350,6 +350,52 @@ func (q *Queries) InsertPlanItem(ctx context.Context, arg InsertPlanItemParams) 
 	return err
 }
 
+const listCalendarItems = `-- name: ListCalendarItems :many
+SELECT p.day, p.task_id, p.start_min, t.title, (t.done_at IS NOT NULL)::boolean AS done
+FROM plan_items p JOIN tasks t ON t.id = p.task_id
+WHERE p.day BETWEEN $1 AND $2
+ORDER BY p.day, p.start_min, p.position, p.task_id
+`
+
+type ListCalendarItemsParams struct {
+	FromDay time.Time
+	ToDay   time.Time
+}
+
+type ListCalendarItemsRow struct {
+	Day      time.Time
+	TaskID   int64
+	StartMin int16
+	Title    string
+	Done     bool
+}
+
+func (q *Queries) ListCalendarItems(ctx context.Context, arg ListCalendarItemsParams) ([]ListCalendarItemsRow, error) {
+	rows, err := q.db.Query(ctx, listCalendarItems, arg.FromDay, arg.ToDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCalendarItemsRow
+	for rows.Next() {
+		var i ListCalendarItemsRow
+		if err := rows.Scan(
+			&i.Day,
+			&i.TaskID,
+			&i.StartMin,
+			&i.Title,
+			&i.Done,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listColumns = `-- name: ListColumns :many
 
 SELECT id, name, position, created_at FROM task_columns ORDER BY position, id
@@ -414,7 +460,7 @@ func (q *Queries) ListPlanItems(ctx context.Context, day time.Time) ([]PlanItem,
 }
 
 const listPlanItemsRange = `-- name: ListPlanItemsRange :many
-SELECT day, task_id, position, blocks, start_min FROM plan_items WHERE day >= $1 AND day < $2 ORDER BY day DESC, position
+SELECT day, task_id, position, blocks, start_min FROM plan_items WHERE day >= $1 AND day < $2 ORDER BY day DESC, start_min, position
 `
 
 type ListPlanItemsRangeParams struct {
@@ -523,6 +569,15 @@ func (q *Queries) ListTypes(ctx context.Context) ([]TaskType, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPlanDay = `-- name: LockPlanDay :exec
+SELECT pg_advisory_xact_lock(741926, ($1::date - DATE '2000-01-01'))
+`
+
+func (q *Queries) LockPlanDay(ctx context.Context, day time.Time) error {
+	_, err := q.db.Exec(ctx, lockPlanDay, day)
+	return err
 }
 
 const moveAllTasks = `-- name: MoveAllTasks :exec

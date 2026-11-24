@@ -83,7 +83,7 @@ func TestTaskInput_Normalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Fields{Title: "Написать отчёт", Blocks: 2, Importance: 7, Note: "заметка"}); !reflect.DeepEqual(got, want) {
+	if want := (Fields{Title: "Написать отчёт", Blocks: 2, Importance: 7, Note: "  заметка \n"}); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 

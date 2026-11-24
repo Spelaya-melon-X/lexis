@@ -900,6 +900,7 @@ POST   /api/training/start        groupId → слова поддерева
 | Подраздел | Хэш |
 |---|---|
 | Распорядок (по умолчанию) | `#/game/plan[/<YYYY-MM-DD>]` (без даты — сегодня) |
+| Календарь | `#/game/calendar[/<YYYY-MM>]` (без месяца — текущий) |
 | Задачи (доска) | `#/game/board[/<taskId>]` (с id — карточка дела + «граф дела») |
 | Фокус | `#/game/focus` (активная сессия или «нет активной» → в распорядок) |
 | Награды | `#/game/shop` (магазин, баланс, история) |
@@ -911,6 +912,7 @@ POST   /api/training/start        groupId → слова поддерева
 #### B1. Дела, типы, доска
 - Дело: `title` (1..200), `blocks` — объём в блоках по 30 мин (1..40), `importance` 1..10, `deadline` DATE (❓ B3 необязателен? рек.: да),
   `typeId` (необязателен), колонка, `note` (простой текст ≤ 20 000).
+- Карточка задачи и её диалог показывают метки из `note`. Тег начинается с `#` на границе слова, дальше идут буквы (в том числе кириллица и латиница), цифры, дефисы или подчёркивания. Одиночный `#` и фрагменты URL пропускаются. Метки приводятся к нижнему регистру и выводятся один раз в порядке появления. Хранится исходный текст. Метки вычисляются при отображении, включая задачи из старых данных и бэкапов.
 - Типы — свои: имя (1..40, уникально без учёта регистра), цвет (палитра групп), порядок ↑↓.
 - **Колонки (рек.):** пользовательские списки (имя, порядок), DnD дел между колонками и внутри (ручной порядок) + фильтр доски по типу. ❓ B1
   (рек.: свои списки; колонки по статусам дублировали бы «выполнено», по типам — фильтр). Первая колонка «Входящие» создаётся миграцией.
@@ -934,6 +936,9 @@ POST   /api/training/start        groupId → слова поддерева
   перетаскиванием в любое время; наложилось на другое — меняются местами; кнопок ↑↓ нет.
 - Лимит дня — 18 блоков (9 ч, настраивается). **Превышение показываем, не запрещаем** ❓ B6 (рек.: полоса «12/18 ч» краснеет, тост-предупреждение).
 - Планировать можно сегодня и любой будущий день; прошлые — только чтение (400 `past_day`). На одно дело — один пункт на день, но разные дни можно.
+- Недели в сетке календаря начинаются с понедельника. Месяцы листаются в обе стороны, кнопка «Сегодня» возвращает к текущему месяцу. По ячейке открывается распорядок даты, по «+» в ячейке сегодняшнего или будущего дня — поиск по открытым делам-листьям, которых ещё нет в плане этой даты. Ячейки получают время и название дела из `plan_items` и `tasks` одним запросом за видимый месяц. Дедлайн хранится независимо. «Сегодня» вычисляется сервером по `LEXIS_TZ`.
+- В распорядке рядом с выбором существующего дела есть «Новая задача». Форма использует поля доски, включая выбор колонки; задача и пункт плана выбранной даты записываются одной транзакцией. При ошибке запись откатывается, диалог сохраняет введённые значения.
+- Дела из календаря и распорядка добавляются одним правилом. Ищется свободный получасовой слот от начала шкалы (для сегодня — с учётом текущего времени), затем пробуется место после последнего пункта в пределах суток. При отсутствии места возвращается `plan_no_slot`. Существующие пункты сохраняют время и объём.
 - Незакрытое из прошлых планов — **не переносим автоматически**, на сегодня блок «Не доделал вчера: … [Перенести]». ❓ B8 (рек.: так).
 - **Формула топ-5** (`tasks.Score`, чистая, table-driven) — кандидаты: невыполненные листья, не в плане этого дня:
   ```
@@ -996,6 +1001,7 @@ tasks        (id, title TEXT CHECK 1..200, blocks SMALLINT CHECK 1..40, importan
 ALTER TABLE tasks ADD parent_id BIGINT REFERENCES tasks ON DELETE CASCADE, CHECK (parent_id <> id);  INDEX (parent_id)
 -- 0008_day_plans.sql (B3)
 plan_items   (day DATE, task_id → tasks ON DELETE CASCADE, position SMALLINT, blocks SMALLINT CHECK 1..40, PRIMARY KEY (day, task_id))
+-- 0009_plan_start.sql (B3): plan_items.start_min SMALLINT (0..1410, по 30 минут)
 -- 0009_focus.sql (B4)
 ritual_items (id, text TEXT CHECK 1..100, position INT)
 focus_sessions (id, task_id → tasks ON DELETE SET NULL, task_title TEXT NOT NULL,   -- снимок: статистика переживает удаление дела
@@ -1019,14 +1025,18 @@ GET/POST /api/tasks/columns, PATCH/DELETE /api/tasks/columns/{id} (409 column_no
 GET    /api/tasks?done=false|true|all   → {tasks: Task[]}   (плоско, дерево строит фронт)
        Task = {id, parentId|null, title, blocks, ownBlocks, importance, deadline|null, typeId|null, columnId, position, note,
                leaf, done, doneAt|null, workSec, createdAt}
-POST   /api/tasks                       {title, blocks, importance, deadline?, typeId?, columnId} → 201 Task
+POST   /api/tasks                       {title, blocks, importance, deadline?, typeId?, columnId, note?} → 201 Task
 PATCH  /api/tasks/{id}                  {title?, blocks?, importance?, deadline?: date|null, typeId?: id|null, note?, done?} → Task
 POST   /api/tasks/{id}/move             {columnId, index} → 204   (одна транзакция: колонка + порядок)
 POST   /api/tasks/{id}/split            {steps: [{title, blocks, importance?, deadline?, typeId?}]} → {tasks: поддерево}   (B2)
 GET    /api/tasks/{id}/tree             → {tasks: поддерево корня}                                                     (B2)
 DELETE /api/tasks/{id}                  → 204 (с шагами)
-GET    /api/tasks/plan/{day}            → {day, items: [{task, blocks}], totalBlocks, limitBlocks, top: [{task, score, reasons}], leftovers: Task[]}
-PUT    /api/tasks/plan/{day}            {items: [{taskId, blocks}]} → Plan   (порядок = порядок массива; 400 past_day | invalid_task | task_not_leaf)
+GET    /api/tasks/plan?from=&to=        → {today, from, to, items: [{day, taskId, start, title, done}]} (границы включительно; без границ — текущий месяц)
+GET    /api/tasks/plan/{day}            → Plan (здесь day может быть today)
+       Plan = {day, today, editable, items: [{task, start, blocks}], totalBlocks, settings, top: [{task, score, reasons}], leftovers: Task[]}
+PUT    /api/tasks/plan/{day}            {items: [{taskId, start, blocks}]} → Plan   (замена плана; порядок по start)
+POST   /api/tasks/plan/{day}/items      {taskId} → 201 Plan (добавить дело; 409 plan_task_exists)
+POST   /api/tasks/plan/{day}/tasks      {title, blocks, importance, deadline?, typeId?, columnId, note?} → 201 Plan (создать и добавить)
 GET/PUT /api/tasks/settings             {dayStart, dayEnd, dayLimit, setupMin}
 # focus
 GET    /api/focus/active                → {session: Session|null, now}
@@ -1044,7 +1054,7 @@ GET    /api/focus/points?before=&limit= → {balance, entries: [...], next}
 GET    /api/focus/stats?from=&to=       → {days: [{day, workSec, setupSec, breakSec, sessions, tasksDone}], tasksDone: [...], triggers: [{trigger, total, gaveIn}], totals}
 ```
 
-**Фронт** (`sections/game/`): `Plan/{Plan,DayScale,TopList,TaskPicker}`, `Board/{Board,Column,TaskCard,TaskDialog,SplitDialog,TaskGraph}`,
+**Фронт** (`sections/game/`): `Calendar/Calendar` (сетка из `lib/dates`), `Plan/{Plan,TaskPicker}`, `Board/{Board,Column,TaskCard,TaskDialog,TaskTags,SplitDialog,TaskGraph}`,
 `Focus/{Focus,Setup,Work,Break,DistractionForm,Summary}`, `Shop/{Shop,RewardDialog,Ledger}`, `Stats/`, `Settings/`; `lib/components/FocusPill` (шапка).
 Чистое (vitest): `lib/plan.layout`, `lib/taskTree.{buildTree, leaves, layout}`, `lib/focus.timeline` (зеркало Go-версии), `lib/board.move` (оптимистичный порядок).
 Go (table-driven): `tasks.Score`/`Top`, `tasks.Rollup` (объём и «выполнено» родителя), `tasks.CheckSplit`, `focus.Timeline`, `focus.Points`, `focus.CanTransition`.

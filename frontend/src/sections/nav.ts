@@ -26,6 +26,7 @@ import HabitsGoals from './habits/Goals/Goals.svelte'
 import HabitsManage from './habits/Manage/Manage.svelte'
 import HabitsNotes from './habits/Notes/Notes.svelte'
 import GameBoard from './game/Board/Board.svelte'
+import GameCalendar from './game/Calendar/Calendar.svelte'
 import GameFocus from './game/Focus/Focus.svelte'
 import GamePlan from './game/Plan/Plan.svelte'
 import GameShop from './game/Shop/Shop.svelte'
@@ -90,6 +91,7 @@ const NAV: { [S in Section]: SectionDef<S> } = {
     label: 'nav.section.game',
     pages: {
       plan: { icon: 'clock', label: 'nav.game.plan', view: GamePlan },
+      calendar: { icon: 'calendar', label: 'nav.game.calendar', view: GameCalendar },
       board: { icon: 'board', label: 'nav.game.board', view: GameBoard },
       projects: { icon: 'target', label: 'nav.game.projects', view: Projects },
       focus: { icon: 'target', label: 'nav.game.focus', view: GameFocus },

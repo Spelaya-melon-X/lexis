@@ -7,6 +7,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func planTitles(p Plan) []string {
@@ -116,5 +117,78 @@ func TestSettings(t *testing.T) {
 	assertCode(t, err, 400, "invalid_day_bounds")
 	if p := must(s.Plan(ctx, "2026-11-05")); p.Settings != got {
 		t.Errorf("plan settings = %+v", p.Settings)
+	}
+}
+
+func TestCalendarMonthBoundaries(t *testing.T) {
+	s, clk := newTestService(t)
+	ctx := context.Background()
+	clk.Set(time.Date(2026, 10, 31, 12, 0, 0, 0, testNow.Location()))
+	col := must(s.CreateColumn(ctx, "Планы"))
+	task := must(s.Create(ctx, TaskInput{Title: "Отчёт", Blocks: 2, Importance: 5, Deadline: new("2026-12-02"), ColumnID: col.ID}))
+	for _, day := range []string{"2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"} {
+		must(s.AddPlanTask(ctx, day, task.ID))
+	}
+	_, err := s.AddPlanTask(ctx, "2026-11-30", task.ID)
+	assertCode(t, err, 409, "plan_task_exists")
+	deadlineOnly := must(s.Create(ctx, TaskInput{Title: "Только дедлайн", Blocks: 1, Importance: 5, Deadline: new("2026-11-15"), ColumnID: col.ID}))
+
+	// В UTC ещё октябрь, в Lexis уже ноябрь.
+	clk.Set(time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC).In(testNow.Location()))
+	calendar := must(s.Calendar(ctx, "", ""))
+	want := []CalendarItem{
+		{Day: "2026-11-01", TaskID: task.ID, Start: 540, Title: "Отчёт"},
+		{Day: "2026-11-30", TaskID: task.ID, Start: 540, Title: "Отчёт"},
+	}
+	if calendar.From != "2026-11-01" || calendar.To != "2026-11-30" || calendar.Today != "2026-11-01" || !reflect.DeepEqual(calendar.Items, want) {
+		t.Fatalf("calendar = %+v, want November dates and items %+v", calendar, want)
+	}
+	if explicit := must(s.Calendar(ctx, "2026-11-01", "2026-11-30")); !reflect.DeepEqual(explicit, calendar) {
+		t.Errorf("explicit November range = %+v, want %+v", explicit, calendar)
+	}
+	past := must(s.Plan(ctx, "2026-10-31"))
+	if past.Editable || len(past.Items) != 1 || past.Items[0].Task.ID != task.ID {
+		t.Errorf("past plan = %+v, want read-only plan with task %d", past, task.ID)
+	}
+	_, err = s.AddPlanTask(ctx, past.Day, deadlineOnly.ID)
+	assertCode(t, err, 400, "past_day")
+	if today := must(s.Plan(ctx, "today")); today.Day != calendar.Today || !today.Editable {
+		t.Errorf("today plan = %+v, want editable %s", today, calendar.Today)
+	}
+}
+
+func TestCreatePlanTaskRollsBackWhenDayIsFull(t *testing.T) {
+	s, _ := newTestService(t)
+	ctx := context.Background()
+	col := must(s.CreateColumn(ctx, "Планы"))
+	target := must(s.CreateColumn(ctx, "Учёба"))
+	day := "2026-11-09"
+	long := must(s.Create(ctx, TaskInput{Title: "Первая", Blocks: 40, Importance: 5, ColumnID: col.ID}))
+	short := must(s.Create(ctx, TaskInput{Title: "Вторая", Blocks: 8, Importance: 5, ColumnID: col.ID}))
+	longSlot := PlanItemInput{TaskID: long.ID, Start: 0, Blocks: 40}
+	original := must(s.SavePlan(ctx, day, PlanInput{Items: []PlanItemInput{longSlot, {TaskID: short.ID, Start: 1200, Blocks: 8}}}))
+	tasks := must(s.Tasks(ctx, FilterAll))
+	in := TaskInput{Title: "Новая задача", Blocks: 2, Importance: 6, ColumnID: target.ID, Deadline: new("2026-11-13"), Note: "  Текст #учёба \n"}
+	_, err := s.CreatePlanTask(ctx, day, in)
+	assertCode(t, err, 400, "plan_no_slot")
+	if got := must(s.Tasks(ctx, FilterAll)); !reflect.DeepEqual(got, tasks) {
+		t.Errorf("failed creation changed the board: %+v", got)
+	}
+	if got := must(s.Plan(ctx, day)); !reflect.DeepEqual(got, original) {
+		t.Errorf("failed creation changed the plan: %+v", got)
+	}
+
+	reduced := must(s.SavePlan(ctx, day, PlanInput{Items: []PlanItemInput{longSlot}}))
+	created := must(s.CreatePlanTask(ctx, day, in))
+	if len(created.Items) != 2 || !reflect.DeepEqual(created.Items[0], reduced.Items[0]) {
+		t.Fatalf("creation must preserve previous items: %+v", created.Items)
+	}
+	item := created.Items[1]
+	if item.Start != 1200 || item.Blocks != 2 || item.Task.ColumnID != target.ID ||
+		item.Task.Note != in.Note || !reflect.DeepEqual(item.Task.Deadline, in.Deadline) {
+		t.Errorf("created item = %+v", item)
+	}
+	if got := order(t, s, target.ID); !reflect.DeepEqual(got, []int64{item.Task.ID}) {
+		t.Errorf("created task missing from target column: %v", got)
 	}
 }

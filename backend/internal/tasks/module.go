@@ -41,8 +41,11 @@ func (m *Module) Routes(r chi.Router) {
 	r.Patch("/columns/{id}", httpx.Handle(m.renameColumn))
 	r.Delete("/columns/{id}", httpx.Handle(m.deleteColumn))
 
+	r.Get("/plan", httpx.Handle(m.calendar))
 	r.Get("/plan/{day}", httpx.Handle(m.plan))
 	r.Put("/plan/{day}", httpx.Handle(m.savePlan))
+	r.Post("/plan/{day}/items", httpx.Handle(m.addPlanTask))
+	r.Post("/plan/{day}/tasks", httpx.Handle(m.createPlanTask))
 	r.Get("/settings", httpx.Handle(m.settings))
 	r.Put("/settings", httpx.Handle(m.updateSettings))
 
@@ -322,6 +325,16 @@ func (m *Module) reorderColumns(w http.ResponseWriter, r *http.Request) error {
 
 // ---------- распорядок дня ----------
 
+func (m *Module) calendar(w http.ResponseWriter, r *http.Request) error {
+	q := r.URL.Query()
+	c, err := m.svc.Calendar(r.Context(), q.Get("from"), q.Get("to"))
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusOK, c)
+	return nil
+}
+
 // plan — GET /api/tasks/plan/{day} → Plan.
 func (m *Module) plan(w http.ResponseWriter, r *http.Request) error {
 	p, err := m.svc.Plan(r.Context(), chi.URLParam(r, "day"))
@@ -332,7 +345,7 @@ func (m *Module) plan(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// savePlan — PUT /api/tasks/plan/{day} {items: [{taskId, blocks}]} → Plan.
+// savePlan — PUT /api/tasks/plan/{day} {items: [{taskId, start, blocks}]} → Plan.
 func (m *Module) savePlan(w http.ResponseWriter, r *http.Request) error {
 	var in PlanInput
 	if err := httpx.Decode(w, r, &in); err != nil {
@@ -343,6 +356,34 @@ func (m *Module) savePlan(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.JSON(w, http.StatusOK, p)
+	return nil
+}
+
+func (m *Module) addPlanTask(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		TaskID int64 `json:"taskId"`
+	}
+	if err := httpx.Decode(w, r, &in); err != nil {
+		return err
+	}
+	p, err := m.svc.AddPlanTask(r.Context(), chi.URLParam(r, "day"), in.TaskID)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusCreated, p)
+	return nil
+}
+
+func (m *Module) createPlanTask(w http.ResponseWriter, r *http.Request) error {
+	var in TaskInput
+	if err := httpx.Decode(w, r, &in); err != nil {
+		return err
+	}
+	p, err := m.svc.CreatePlanTask(r.Context(), chi.URLParam(r, "day"), in)
+	if err != nil {
+		return err
+	}
+	httpx.JSON(w, http.StatusCreated, p)
 	return nil
 }
 

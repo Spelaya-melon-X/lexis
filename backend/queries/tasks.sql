@@ -114,7 +114,16 @@ SELECT * FROM plan_items WHERE day = @day ORDER BY start_min, position;
 
 -- name: ListPlanItemsRange :many
 -- Пункты прошлых дней — для «не доделал».
-SELECT * FROM plan_items WHERE day >= @from_day AND day < @to_day ORDER BY day DESC, position;
+SELECT * FROM plan_items WHERE day >= @from_day AND day < @to_day ORDER BY day DESC, start_min, position;
+
+-- name: ListCalendarItems :many
+SELECT p.day, p.task_id, p.start_min, t.title, (t.done_at IS NOT NULL)::boolean AS done
+FROM plan_items p JOIN tasks t ON t.id = p.task_id
+WHERE p.day BETWEEN @from_day AND @to_day
+ORDER BY p.day, p.start_min, p.position, p.task_id;
+
+-- name: LockPlanDay :exec
+SELECT pg_advisory_xact_lock(741926, (sqlc.arg(day)::date - DATE '2000-01-01'));
 
 -- name: DeletePlan :exec
 DELETE FROM plan_items WHERE day = @day;

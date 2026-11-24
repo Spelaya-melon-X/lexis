@@ -62,19 +62,6 @@ export function resize(slots: Slot[], id: number, blocks: number): Slot[] {
   return resolve(slots.map((s) => (s.id === id ? { ...s, blocks } : s)))
 }
 
-/**
- * Первое свободное время не раньше from, куда помещается дело на blocks блоков и заканчивается
- * до to. Места нет — сразу после последнего дела (может вылезти за конец дня — шкала подсветит).
- */
-export function firstFree(slots: Slot[], blocks: number, from: number, to: number): number {
-  const probe = { id: -1, start: from, blocks }
-  for (let t = from; t + blocks * BLOCK_MIN <= to; t += BLOCK_MIN) {
-    probe.start = t
-    if (!slots.some((s) => overlaps(probe, s))) return t
-  }
-  return clampStart(Math.max(from, ...slots.map(endOf)), blocks)
-}
-
 /** 570 → "9:30", 1440 → "24:00". */
 export function formatTime(min: number): string {
   return `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`
@@ -94,9 +81,4 @@ export function hourTicks(dayStart: number, dayEnd: number): number[] {
   const out: number[] = []
   for (let t = Math.ceil(dayStart / 60) * 60; t <= dayEnd; t += 60) out.push(t)
   return out
-}
-
-/** Сколько займёт новое дело: его объём, но не больше 40 блоков (столько можно в один день). */
-export function defaultBlocks(taskBlocks: number): number {
-  return Math.min(Math.max(taskBlocks, 1), 40)
 }

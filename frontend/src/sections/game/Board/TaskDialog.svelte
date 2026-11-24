@@ -1,12 +1,13 @@
 <script lang="ts">
   // Создание и правка дела (§18.3). task = null — новое (в колонку column); open управляет видимостью.
   import { api } from '../../../lib/api/client'
-  import type { Task, TaskColumn, TaskType } from '../../../lib/api/types'
+  import type { Task, TaskColumn, TaskInput, TaskType } from '../../../lib/api/types'
   import Button from '../../../lib/components/Button.svelte'
   import Modal from '../../../lib/components/Modal.svelte'
   import { errorText, t } from '../../../lib/i18n/i18n.svelte'
   import { focus } from '../../../lib/state/focus.svelte'
   import { blocksText } from '../format'
+  import TaskTags from './TaskTags.svelte'
 
   interface Props {
     open: boolean
@@ -15,12 +16,13 @@
     columns: TaskColumn[]
     types: TaskType[]
     onclose: () => void
-    onsaved: (t: Task) => void
-    ondelete: (t: Task) => void
-    onsplit: (t: Task) => void
-    ongraph: (t: Task) => void
+    oncreate?: (input: TaskInput) => Promise<void>
+    onsaved?: (t: Task) => void
+    ondelete?: (t: Task) => void
+    onsplit?: (t: Task) => void
+    ongraph?: (t: Task) => void
   }
-  let { open, task, column, columns, types, onclose, onsaved, ondelete, onsplit, ongraph }: Props = $props()
+  let { open, task, column, columns, types, onclose, oncreate, onsaved, ondelete, onsplit, ongraph }: Props = $props()
 
   // У дела с шагами объём и «выполнено» считаются по шагам: правим только первоначальную оценку.
   const parent = $derived(task !== null && !task.leaf)
@@ -55,7 +57,12 @@
     const fields = { title, blocks, importance, deadline: deadline || null, typeId, note }
     try {
       if (!task) {
-        onsaved(await api.tasks.create({ ...fields, columnId }))
+        const input = { ...fields, columnId }
+        if (oncreate) await oncreate(input)
+        else {
+          const saved = await api.tasks.create(input)
+          onsaved?.(saved)
+        }
         return
       }
       let saved = await api.tasks.update(task.id, fields)
@@ -63,7 +70,7 @@
         await api.tasks.move(task.id, columnId, null) // в другую колонку — в конец
         saved = { ...saved, columnId }
       }
-      onsaved(saved)
+      onsaved?.(saved)
     } catch (err) {
       error = errorText(err) // ошибка в форме: диалог не закрывается, можно поправить
     } finally {
@@ -72,7 +79,7 @@
   }
 </script>
 
-<Modal {open} title={task ? t('game.editTask') : t('game.newTask')} width={560} {onclose}>
+<Modal {open} title={task ? t('game.editTask') : t('game.newTask')} width={560} onclose={() => !saving && onclose()}>
   <form id="task-form" class="form" onsubmit={save}>
     <label>
       <span>{t('game.title')}</span>
@@ -119,23 +126,24 @@
       <span>{t('game.note')}</span>
       <textarea class="input" rows="4" bind:value={note} placeholder={t('game.notePlaceholder')}></textarea>
     </label>
+    <TaskTags {note} />
 
-    {#if error}<p class="error">{error}</p>{/if}
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
   </form>
 
   {#snippet footer()}
     {#if task}
-      <Button variant="ghost" icon="trash" aria-label={t('common.delete')} title={t('common.delete')} onclick={() => ondelete(task)} disabled={saving} />
+      <Button variant="ghost" icon="trash" aria-label={t('common.delete')} title={t('common.delete')} onclick={() => ondelete?.(task)} disabled={saving} />
       {#if task.leaf && !task.done}
         <Button variant="ghost" icon="play" disabled={saving || focus.session !== null} onclick={() => (onclose(), focus.begin(task.id))}>
           {t('game.focus.begin')}
         </Button>
       {/if}
       {#if !(task.leaf && task.done)}
-        <Button variant="ghost" icon="steps" onclick={() => onsplit(task)} disabled={saving}>{parent ? t('game.splitMore') : t('game.split')}</Button>
+        <Button variant="ghost" icon="steps" onclick={() => onsplit?.(task)} disabled={saving}>{parent ? t('game.splitMore') : t('game.split')}</Button>
       {/if}
       {#if parent || task.parentId !== null}
-        <Button variant="ghost" icon="graph" onclick={() => ongraph(task)} disabled={saving}>{t('game.graph')}</Button>
+        <Button variant="ghost" icon="graph" onclick={() => ongraph?.(task)} disabled={saving}>{t('game.graph')}</Button>
       {/if}
       <span class="spacer"></span>
     {/if}

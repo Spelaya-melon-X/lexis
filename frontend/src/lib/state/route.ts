@@ -7,7 +7,7 @@ export const SECTIONS = {
   day: ['entry', 'calendar', 'week', 'stats'],
   habits: ['check', 'calendar', 'goals', 'notes', 'manage'],
   // «Игра в жизнь» (§18.3): подразделы добавляются по фазам — распорядок (B3), фокус и награды (B4), статистика (B5).
-  game: ['plan', 'board', 'projects', 'focus', 'shop', 'stats', 'settings'],
+  game: ['plan', 'calendar', 'board', 'projects', 'focus', 'shop', 'stats', 'settings'],
   // «Спорт» (§18.4).
   dreams: ['list', 'timeline'],
   study: ['cards', 'stats'],

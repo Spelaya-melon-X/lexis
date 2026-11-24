@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampStart, defaultBlocks, firstFree, formatTime, hourTicks, parseTime, place, resize, resolve, snap, type Slot } from './plan'
+import { clampStart, formatTime, hourTicks, parseTime, place, resize, resolve, snap, type Slot } from './plan'
 
 const s = (id: number, start: number, blocks: number): Slot => ({ id, start, blocks })
 // «id@ЧЧ:ММ+блоки» по времени — удобно сравнивать раскладки целиком
@@ -60,24 +60,6 @@ describe('resize', () => {
   })
 })
 
-describe('firstFree', () => {
-  const plan = [s(1, 540, 2), s(2, 660, 2)] // 9–10, 11–12
-  it.each([
-    { blocks: 2, from: 540, want: 600 }, // окно 10–11
-    { blocks: 3, from: 540, want: 720 }, // полтора часа — только после 12
-    { blocks: 1, from: 630, want: 630 },
-    { blocks: 1, from: 540, want: 600 },
-  ])('$blocks blocks from $from', ({ blocks, from, want }) => {
-    expect(firstFree(plan, blocks, from, 1380)).toBe(want)
-  })
-  it('no room before the day end — right after the last item', () => {
-    expect(firstFree(plan, 4, 540, 780)).toBe(720)
-  })
-  it('empty plan — from', () => {
-    expect(firstFree([], 2, 540, 1380)).toBe(540)
-  })
-})
-
 describe('snap / clampStart', () => {
   it.each([
     [544, 540],
@@ -118,15 +100,5 @@ describe('hourTicks', () => {
   })
   it('half-hour start rounds up', () => {
     expect(hourTicks(570, 690)).toEqual([600, 660])
-  })
-})
-
-describe('defaultBlocks', () => {
-  it.each([
-    [3, 3],
-    [60, 40],
-    [0, 1],
-  ])('%i → %i', (b, want) => {
-    expect(defaultBlocks(b)).toBe(want)
   })
 })

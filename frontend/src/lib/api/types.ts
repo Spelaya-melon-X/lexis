@@ -476,12 +476,28 @@ export interface TopItem {
 
 export interface Plan {
   day: string
+  today: string
   editable: boolean // прошлые дни — только чтение
   items: PlanItem[]
   totalBlocks: number
   settings: GameSettings
   top: TopItem[]
   leftovers: Task[]
+}
+
+export interface CalendarItem {
+  day: string
+  taskId: number
+  start: number
+  title: string
+  done: boolean
+}
+
+export interface TaskCalendar {
+  today: string
+  from: string
+  to: string
+  items: CalendarItem[]
 }
 
 // ---------- игра: фокус и награды (§18.3, B4) ----------

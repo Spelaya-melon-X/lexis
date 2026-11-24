@@ -481,31 +481,35 @@ func (s *Service) Create(ctx context.Context, in TaskInput) (Task, error) {
 	}
 	var t Task
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		q := store.New(tx)
-		if err := lockColumn(ctx, q, in.ColumnID); err != nil {
-			return err
-		}
-		if err := checkType(ctx, q, f.TypeID); err != nil {
-			return err
-		}
-		pos, err := q.NextTaskPosition(ctx, in.ColumnID)
-		if err != nil {
-			return fmt.Errorf("position: %w", err)
-		}
-		created, err := q.CreateTask(ctx, store.CreateTaskParams{
-			Title: f.Title, Blocks: int16(f.Blocks), Importance: int16(f.Importance), Deadline: f.Deadline,
-			TypeID: f.TypeID, ColumnID: in.ColumnID, Position: pos, Note: f.Note, Now: s.clock.Now(),
-		})
-		if err != nil {
-			return err
-		}
-		t = toTask(created, Agg{Leaf: true, Blocks: f.Blocks}) // новое дело — всегда лист без шагов
-		return nil
+		var err error
+		t, err = s.createTask(ctx, store.New(tx), in.ColumnID, f)
+		return err
 	})
 	if err != nil {
 		return Task{}, fmt.Errorf("task create: %w", err)
 	}
 	return t, nil
+}
+
+func (s *Service) createTask(ctx context.Context, q *store.Queries, columnID int64, f Fields) (Task, error) {
+	if err := lockColumn(ctx, q, columnID); err != nil {
+		return Task{}, err
+	}
+	if err := checkType(ctx, q, f.TypeID); err != nil {
+		return Task{}, err
+	}
+	pos, err := q.NextTaskPosition(ctx, columnID)
+	if err != nil {
+		return Task{}, fmt.Errorf("position: %w", err)
+	}
+	created, err := q.CreateTask(ctx, store.CreateTaskParams{
+		Title: f.Title, Blocks: int16(f.Blocks), Importance: int16(f.Importance), Deadline: f.Deadline,
+		TypeID: f.TypeID, ColumnID: columnID, Position: pos, Note: f.Note, Now: s.clock.Now(),
+	})
+	if err != nil {
+		return Task{}, fmt.Errorf("insert task: %w", err)
+	}
+	return toTask(created, Agg{Leaf: true, Blocks: f.Blocks}), nil
 }
 
 func (s *Service) Update(ctx context.Context, id int64, p Patch) (Task, error) {

@@ -6,32 +6,38 @@
   import { fade } from 'svelte/transition'
   import { latest } from '../../../lib/async'
   import { api } from '../../../lib/api/client'
-  import type { Plan, PlanItem, Task, TaskType } from '../../../lib/api/types'
+  import type { Plan, PlanItem, Task, TaskColumn, TaskInput, TaskType } from '../../../lib/api/types'
   import Button from '../../../lib/components/Button.svelte'
   import DatePager from '../../../lib/components/DatePager.svelte'
   import Icon, { type IconName } from '../../../lib/components/Icon.svelte'
   import ProgressBar from '../../../lib/components/ProgressBar.svelte'
   import Spinner from '../../../lib/components/Spinner.svelte'
-  import { isDay, today as todayOf } from '../../../lib/dates'
+  import { isDay } from '../../../lib/dates'
   import { errorText, t } from '../../../lib/i18n/i18n.svelte'
-  import { BLOCK_MIN, clampStart, defaultBlocks, endOf, firstFree, formatTime, hourTicks, place, resize, snap, type Slot } from '../../../lib/plan'
+  import { BLOCK_MIN, clampStart, endOf, formatTime, hourTicks, place, resize, snap, type Slot } from '../../../lib/plan'
   import { route } from '../../../lib/state/route.svelte'
   import { focus } from '../../../lib/state/focus.svelte'
   import { toasts } from '../../../lib/state/toasts.svelte'
   import { ancestors } from '../../../lib/tasks'
   import { blocksText } from '../format'
+  import TaskDialog from '../Board/TaskDialog.svelte'
   import TaskPicker from './TaskPicker.svelte'
 
   const PX_PER_BLOCK = 30 // высота получаса на шкале
 
-  const today = todayOf()
-  const day = $derived(isDay(route.rest) ? route.rest : today)
+  const requestedDay = $derived(isDay(route.rest) ? route.rest : 'today')
+  let today = $state<string | undefined>()
+  const day = $derived(requestedDay === 'today' ? today : requestedDay)
 
   let plan = $state<Plan | null>(null)
   let error = $state<string | null>(null)
   let types = $state(new Map<number, TaskType>())
   let openTasks = $state<Task[]>([]) // для хлебных крошек «Родитель › шаг»: родители открытых шагов тоже открыты
   let picking = $state(false)
+  let creating = $state(false)
+  let columns = $state<TaskColumn[]>([])
+  let loadingColumns = $state(false)
+  let writing = $state(false)
   // Перетаскивание: какое дело, где его ухватили (смещение курсора от верха карточки) и куда оно встанет.
   let drag = $state<{ id: number; grab: number } | null>(null)
   let preview = $state<Slot | null>(null)
@@ -42,13 +48,20 @@
   function load(d: string) {
     error = null
     void fetchPlan(d)
-      .then((r) => !r.stale && (plan = r.value))
+      .then((r) => {
+        if (r.stale) return
+        plan = r.value
+        today = plan.today
+      })
       .catch((e: unknown) => (error = errorText(e)))
   }
 
   $effect(() => {
     plan = null // не показывать прошлый день под новой датой, пока грузится
-    load(day)
+    picking = false
+    creating = false
+    load(requestedDay)
+    return fetchPlan.cancel
   })
 
   onMount(() => {
@@ -78,18 +91,24 @@
 
   /** Оптимистично: экран меняется сразу; ответ сервера подтверждает (и пересчитывает топ). */
   async function save(items: PlanItem[]) {
-    if (!plan) return
+    if (!plan?.editable || writing) return
     const d = plan.day
     const wasOver = over
     items = [...items].sort((a, b) => a.start - b.start)
     plan = { ...plan, items, totalBlocks: items.reduce((sum, x) => sum + x.blocks, 0) }
     if (!wasOver && plan.totalBlocks > s.dayLimit) toasts.error(t('game.plan.overLimit', { limit: blocksText(s.dayLimit) }))
+    writing = true
     try {
       const fresh = await api.tasks.savePlan(d, items.map((x) => ({ taskId: x.task.id, start: x.start, blocks: x.blocks })))
       if (plan?.day === d) plan = fresh
     } catch (e) {
       toasts.error(errorText(e))
-      if (plan?.day === d) load(d)
+      if (plan?.day === d) {
+        plan = null
+        load(requestedDay)
+      }
+    } finally {
+      writing = false
     }
   }
 
@@ -100,15 +119,55 @@
     void save(next.map((sl) => ({ task: byId.get(sl.id)!, start: sl.start, blocks: sl.blocks })))
   }
 
-  function add(task: Task) {
+  async function add(task: Task) {
     picking = false
-    if (!plan || planned.has(task.id)) return
-    const blocks = defaultBlocks(task.blocks)
-    // Сегодня — не раньше «сейчас» (округлённого вверх до получаса): в прошлое планировать незачем.
-    const now = new Date()
-    const nowMin = Math.ceil((now.getHours() * 60 + now.getMinutes()) / BLOCK_MIN) * BLOCK_MIN
-    const from = day === today ? Math.max(s.dayStart, Math.min(nowMin, s.dayEnd - BLOCK_MIN)) : s.dayStart
-    void save([...plan.items, { task, start: firstFree(slots, blocks, from, s.dayEnd), blocks }])
+    if (!plan?.editable || writing || planned.has(task.id)) return
+    const d = plan.day
+    writing = true
+    try {
+      acceptAddition(await api.tasks.addPlanTask(d, task.id))
+    } catch (e) {
+      toasts.error(errorText(e))
+    } finally {
+      writing = false
+    }
+  }
+
+  function acceptAddition(fresh: Plan) {
+    if (plan?.day !== fresh.day) return
+    if (!over && fresh.totalBlocks > fresh.settings.dayLimit) {
+      toasts.error(t('game.plan.overLimit', { limit: blocksText(fresh.settings.dayLimit) }))
+    }
+    plan = fresh
+    today = fresh.today
+  }
+
+  async function showCreate() {
+    if (!plan?.editable || writing || loadingColumns) return
+    const d = plan.day
+    loadingColumns = true
+    try {
+      columns = await api.tasks.columns.list()
+      if (plan?.day !== d) return
+      if (columns.length === 0) toasts.error(t('game.noColumns'))
+      else creating = true
+    } catch (e) {
+      toasts.error(errorText(e))
+    } finally {
+      loadingColumns = false
+    }
+  }
+
+  async function create(input: TaskInput) {
+    if (!plan?.editable || writing) return
+    const d = plan.day
+    writing = true
+    try {
+      acceptAddition(await api.tasks.createPlanTask(d, input))
+      if (plan?.day === d) creating = false
+    } finally {
+      writing = false
+    }
   }
 
   function setBlocks(id: number, blocks: number) {
@@ -128,12 +187,16 @@
   }
 
   async function toggleDone(task: Task) {
+    if (!plan?.editable || writing) return
+    writing = true
     try {
       const next = await api.tasks.update(task.id, { done: !task.done })
       if (next.done) toasts.success(t('game.doneToast'))
-      load(day)
+      load(requestedDay)
     } catch (e) {
       toasts.error(errorText(e))
+    } finally {
+      writing = false
     }
   }
 
@@ -178,7 +241,7 @@
 
 <div class="page">
   <header>
-    <DatePager {day} {today} onchange={go} />
+    {#if day}<DatePager {day} {today} onchange={go} />{/if}
     {#if plan}
       <div class="total" class:over>
         <span>
@@ -192,7 +255,7 @@
   </header>
 
   {#if error && !plan}
-    <div class="state"><p>{error}</p><Button icon="refresh" onclick={() => load(day)}>{t('common.retry')}</Button></div>
+    <div class="state"><p>{error}</p><Button icon="refresh" onclick={() => load(requestedDay)}>{t('common.retry')}</Button></div>
   {:else if !plan}
     <div class="state"><Spinner size={28} /></div>
   {:else}
@@ -234,13 +297,13 @@
                 style:top="{px(item.start)}px"
                 style:height="{item.blocks * PX_PER_BLOCK - 3}px"
                 style:--type={type?.color ?? 'var(--c-line)'}
-                draggable={plan.editable}
+                draggable={plan.editable && !writing}
                 ondragstart={(e) => onDragStart(e, item)}
                 ondragend={endDrag}
                 onkeydown={(e) => plan?.editable && nudge(e, item)}
                 in:fade={{ duration: 200 }}
               >
-                <input type="checkbox" checked={item.task.done} aria-label={item.task.done ? t('game.markUndone') : t('game.markDone')}
+                <input type="checkbox" checked={item.task.done} disabled={!plan.editable || writing} aria-label={item.task.done ? t('game.markUndone') : t('game.markDone')}
                   onchange={() => toggleDone(item.task)} />
                 <button class="title" title={t('game.plan.openTask')} onclick={() => open(item.task)}>
                   {item.task.title}
@@ -248,13 +311,13 @@
                 <span class="time muted">{formatTime(item.start)}–{formatTime(end)}</span>
                 {#if plan.editable}
                   <span class="acts">
-                    {@render act('chevronLeft', t('game.plan.lessBlocks'), () => setBlocks(item.task.id, item.blocks - 1), item.blocks <= 1)}
+                    {@render act('chevronLeft', t('game.plan.lessBlocks'), () => setBlocks(item.task.id, item.blocks - 1), writing || item.blocks <= 1)}
                     <span class="blocks" title={t('game.plan.blocksLabel')}>{blocksText(item.blocks)}</span>
-                    {@render act('chevronRight', t('game.plan.moreBlocks'), () => setBlocks(item.task.id, item.blocks + 1), item.blocks >= 40)}
+                    {@render act('chevronRight', t('game.plan.moreBlocks'), () => setBlocks(item.task.id, item.blocks + 1), writing || item.blocks >= 40)}
                     {#if day === today && !item.task.done}
                       {@render act('play', t('game.focus.begin'), () => focus.begin(item.task.id), focus.session !== null)}
                     {/if}
-                    {@render act('x', t('game.plan.remove'), () => remove(item.task.id))}
+                    {@render act('x', t('game.plan.remove'), () => remove(item.task.id), writing)}
                   </span>
                 {/if}
               </div>
@@ -291,7 +354,10 @@
                 {/each}
               </ul>
             {/if}
-            <Button icon="plus" onclick={() => (picking = true)}>{t('game.plan.pick')}</Button>
+            <div class="add-actions">
+              <Button icon="plus" disabled={writing} onclick={() => (picking = true)}>{t('game.plan.pick')}</Button>
+              <Button icon="plus" disabled={writing} loading={loadingColumns} onclick={showCreate}>{t('game.plan.newTask')}</Button>
+            </div>
           </section>
         </aside>
       {/if}
@@ -315,11 +381,13 @@
         </span>
       {/if}
     </div>
-    <Button size="sm" icon="plus" onclick={() => add(task)}>{t('game.plan.add')}</Button>
+    <Button size="sm" icon="plus" disabled={writing} onclick={() => add(task)}>{t('game.plan.add')}</Button>
   </li>
 {/snippet}
 
 <TaskPicker open={picking} {planned} onclose={() => (picking = false)} onpick={add} />
+<TaskDialog open={creating} task={null} column={null} {columns} types={[...types.values()]}
+  onclose={() => (creating = false)} oncreate={create} />
 
 <style>
   .page {
@@ -335,6 +403,11 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--s-3);
+  }
+  .add-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
   }
   .total {
     display: flex;

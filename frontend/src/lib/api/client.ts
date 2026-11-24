@@ -30,6 +30,7 @@ import type {
   GroupPatch,
   Plan,
   Task,
+  TaskCalendar,
   TaskColumn,
   TaskFilter,
   TaskInput,
@@ -224,6 +225,9 @@ export const api = {
     /** Дерево, в которое входит дело (от корня, обход в глубину). */
     tree: (id: number) => get<{ tasks: Task[] }>(`/tasks/${id}/tree`).then((r) => r.tasks),
     plan: (day: string) => get<Plan>(`/tasks/plan/${day}`),
+    calendar: (from?: string, to?: string) => get<TaskCalendar>(`/tasks/plan${qs({ from, to })}`),
+    addPlanTask: (day: string, taskId: number) => post<Plan>(`/tasks/plan/${day}/items`, { taskId }),
+    createPlanTask: (day: string, input: TaskInput) => post<Plan>(`/tasks/plan/${day}/tasks`, input),
     /** Весь план дня (PUT заменяет); пункты не пересекаются по времени. */
     savePlan: (day: string, items: { taskId: number; start: number; blocks: number }[]) => request<Plan>('PUT', `/tasks/plan/${day}`, { items }),
     settings: () => get<GameSettings>('/tasks/settings'),
