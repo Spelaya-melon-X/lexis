@@ -8,9 +8,8 @@
 
 <div class="scene">
   <div class="inner" class:flipped>
-    <!-- inert, а не aria-hidden: невидимая сторона не должна получать фокус по Tab -->
-    <div class="face front" inert={flipped}>{@render front()}</div>
-    <div class="face back" inert={!flipped}>{@render back()}</div>
+    <div class="face front" inert={flipped} aria-hidden={flipped}>{@render front()}</div>
+    <div class="face back" inert={!flipped} aria-hidden={!flipped}>{@render back()}</div>
   </div>
 </div>
 
@@ -20,6 +19,7 @@
   }
   .inner {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     transform-style: preserve-3d;
     transition: transform var(--dur-slow) var(--ease-out);
   }
@@ -33,17 +33,27 @@
     align-items: center;
     justify-content: center;
     gap: var(--s-4);
-    min-height: 300px;
-    padding: var(--s-6) var(--s-5);
+    min-width: 0;
+    min-height: clamp(16rem, 36dvh, 21rem);
+    padding: clamp(1.5rem, 5vw, 3rem) clamp(1rem, 4vw, 2.5rem);
     border: var(--bw-strong) solid var(--c-border);
     border-radius: var(--radius);
     background: var(--c-surface);
     box-shadow: var(--shadow);
     text-align: center;
+    overflow-wrap: anywhere;
     backface-visibility: hidden;
   }
   .back {
     transform: rotateY(180deg);
-    background: var(--c-green-soft);
+    background: color-mix(in srgb, var(--c-green-soft) 45%, var(--c-surface));
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .inner.flipped, .back {
+      transform: none;
+    }
+    .face[aria-hidden='true'] {
+      visibility: hidden;
+    }
   }
 </style>

@@ -36,22 +36,19 @@ type QueueWord struct {
 	Translation  string
 	Level        int16
 	NextReviewAt time.Time
-	Examples     []words.Example
 }
 
-// Card — одна карточка очереди. Для context — с примером (подкарточка),
-// у одного слова-глагола их может быть несколько.
+// Card — одна словарная карточка со всеми примерами в исходном порядке.
 type Card struct {
-	WordID      int64          `json:"wordId"`
-	Term        string         `json:"term"`
-	Forms       []string       `json:"forms,omitempty"`
-	Translation string         `json:"translation"`
-	Level       int16          `json:"level"`
-	Example     *words.Example `json:"example,omitempty"`
+	WordID      int64           `json:"wordId"`
+	Term        string          `json:"term"`
+	Forms       []string        `json:"forms,omitempty"`
+	Translation string          `json:"translation"`
+	Level       int16           `json:"level"`
+	Examples    []words.Example `json:"examples,omitempty"`
 }
 
 type BuildOptions struct {
-	Strategy Strategy
 	Now      time.Time
 	NewLimit int  // только для обычной сессии
 	Free     bool // все слова, один shuffle, без корзин и лимита
@@ -76,7 +73,10 @@ func Build(ws []QueueWord, o BuildOptions) []Card {
 	cardBuckets := make([][]Card, len(buckets))
 	for b, bucket := range buckets {
 		for _, w := range bucket {
-			cardBuckets[b] = append(cardBuckets[b], expand(w, o.Strategy, o.Rand)...)
+			cardBuckets[b] = append(cardBuckets[b], Card{
+				WordID: w.ID, Term: w.Term, Forms: w.Forms,
+				Translation: w.Translation, Level: w.Level,
+			})
 		}
 	}
 	return spreadSimilar(cardBuckets)
@@ -106,40 +106,16 @@ func splitBuckets(ws []QueueWord, now time.Time, newLimit int, r *rand.Rand) [][
 	return [][]QueueWord{overdue, today, fresh}
 }
 
-// expand превращает слово в карточки по стратегии. context: у глагола с 3 формами —
-// подкарточка на каждый пример, у обычного слова — один случайный пример;
-// без примеров — карточка без примера (фронт покажет её как en_ru).
-func expand(w QueueWord, s Strategy, r *rand.Rand) []Card {
-	base := Card{WordID: w.ID, Term: w.Term, Forms: w.Forms, Translation: w.Translation, Level: w.Level}
-	if s != StrategyContext || len(w.Examples) == 0 {
-		return []Card{base}
-	}
-	if len(w.Forms) == 0 {
-		ex := w.Examples[r.IntN(len(w.Examples))]
-		base.Example = &ex
-		return []Card{base}
-	}
-	cards := make([]Card, len(w.Examples))
-	for i := range w.Examples {
-		cards[i] = base
-		cards[i].Example = &w.Examples[i]
-	}
-	return cards
-}
-
 // spreadSimilar склеивает корзины по порядку так, чтобы похожие карточки не шли подряд.
 //
-// Похожие = одинаковый перевод без учёта регистра; подкарточки одного глагола под это
-// попадают автоматически (перевод у них общий). Это отношение эквивалентности, поэтому
-// задача — классическая «переставь так, чтобы соседние ключи не совпадали»:
+// Похожие = одинаковый перевод без учёта регистра. Нужно переставить карточки так,
+// чтобы соседние ключи не совпадали:
 //   - обычно берём следующий ключ в shuffle-порядке, кроме совпадающего с предыдущей карточкой —
 //     так сохраняется случайность;
 //   - но если самая большая группа занимает ≥ половины оставшегося, ставим её сейчас,
 //     иначе в хвосте она останется одна и соседства не избежать.
 //
-// Простой обмен «с ближайшей непохожей впереди» тут не годится: он застревает, когда
-// в конце корзины остаются только подкарточки одного глагола.
-// Корзины не перемешиваются; если развести невозможно (в корзине один глагол) — best effort.
+// Корзины не перемешиваются. Если одинаковых переводов слишком много, часть соседств неизбежна.
 func spreadSimilar(buckets [][]Card) []Card {
 	out := []Card{}
 	last, hasLast := "", false
@@ -183,10 +159,6 @@ func spreadSimilar(buckets [][]Card) []Card {
 }
 
 func similarKey(c Card) string { return strings.ToLower(c.Translation) }
-
-func similar(a, b Card) bool {
-	return a.WordID == b.WordID || similarKey(a) == similarKey(b)
-}
 
 func shuffle[T any](s []T, r *rand.Rand) {
 	r.Shuffle(len(s), func(i, j int) { s[i], s[j] = s[j], s[i] })

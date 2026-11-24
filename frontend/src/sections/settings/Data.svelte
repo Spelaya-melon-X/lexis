@@ -39,7 +39,7 @@
       const r = await api.data.import(pending)
       if (r.kind === 'backup') {
         const c = r.restored
-        toasts.success(t('settings.restored', { words: c.words, groups: c.groups, sessions: c.sessions, days: c.days, habits: c.habits }))
+        toasts.success(t('settings.restored', { words: c.words, groups: c.groups, sessions: c.sessions, days: c.days, habits: c.habits, dreams: c.dreams, projects: c.projects, timelineGoals: c.timelineGoals, studyGroups: c.studyGroups, studyCards: c.studyCards }))
         // Язык мог прийти из бэкапа — применяем сразу.
         i18n.locale = (await api.settings.get()).language
         reminders.refresh()

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"lexis/internal/importexport"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/db/dbtest"
 	"lexis/internal/platform/eventbus"
@@ -136,7 +137,7 @@ func TestRouter_EndToEnd(t *testing.T) {
 		Words   []any
 		Journal struct{ Days []any }
 	}
-	if code := call(http.MethodGet, "/api/data/export", "", &backup); code != 200 || backup.Version != 3 || len(backup.Words) != 2 || len(backup.Journal.Days) != 1 {
+	if code := call(http.MethodGet, "/api/data/export", "", &backup); code != 200 || backup.Version != importexport.BackupVersion || len(backup.Words) != 2 || len(backup.Journal.Days) != 1 {
 		t.Errorf("export: %d %+v", code, backup)
 	}
 }

@@ -129,8 +129,8 @@ export type GroupChildren = 'lift' | 'delete'
 
 // ---------- training ----------
 
-export type Strategy = 'en_ru' | 'ru_en' | 'context'
 export type Answer = 'good' | 'hard' | 'again'
+export type TrainingDirection = 'en_ru' | 'ru_en'
 
 export interface TrainingCard {
   wordId: number
@@ -138,7 +138,7 @@ export interface TrainingCard {
   forms?: string[]
   translation: string
   level: Level
-  example?: Example
+  examples?: Example[]
 }
 
 export interface StartResult {
@@ -223,7 +223,7 @@ export type ImportResult =
   | { kind: 'words'; created?: number; merged?: number; errors?: LineError[] }
   | {
       kind: 'backup'
-      restored: { groups: number; words: number; sessions: number; reviews: number; achievements: number; days: number; habits: number }
+      restored: { timelineGoals: number; studyGroups: number; studyCards: number; dreams: number; projects: number; groups: number; words: number; sessions: number; reviews: number; achievements: number; days: number; habits: number }
     }
 
 // ---------- journal (§17.2) ----------
@@ -660,3 +660,73 @@ export interface ProgressPoint {
   sets: number
   reps: number
 }
+
+// Life wishes and projects (v4); daily tasks remain independent.
+export interface AmbitionFields {
+  title: string
+  note: string
+  deadline: string | null
+  position: number
+}
+export interface DreamCategory { id: number; title: string; position: number }
+export interface Dream extends AmbitionFields {
+  id: number
+  status: 'want' | 'active' | 'fulfilled'
+  categoryId: number | null
+  projectId: number | null
+}
+export interface BigProject extends AmbitionFields { id: number }
+export interface ProjectStep extends AmbitionFields {
+  id: number
+  projectId: number
+  parentId: number | null
+  done: boolean
+}
+export type AmbitionKind = 'categories' | 'dreams' | 'projects' | 'steps'
+export interface AmbitionInput extends AmbitionFields {
+  status?: Dream['status']
+  categoryId?: number | null
+  projectId?: number | null
+  parentId?: number | null
+  done?: boolean
+  requires?: number[]
+}
+export interface Ambitions {
+ timeline?: { years: number[]; goals: TimelineGoal[] }
+  categories: DreamCategory[]
+  dreams: Dream[]
+  projects: BigProject[]
+  steps: ProjectStep[]
+  dependencies: { stepId: number; requiresId: number }[]
+  today: string
+  states: Record<number, { done: boolean; leaf: boolean; ready: boolean; blockedBy: number[]; overdue: boolean; progress: number }>
+  summaries: Record<number, { progress: number; done: number; open: number; overdue: number; next: number[] }>
+}
+
+export interface TimelineGoal { id: number; year: number; month: number | null; title: string; note: string; dreamId: number | null }
+export type TimelineInput = Omit<TimelineGoal, 'id'>
+export type StudyKind = 'definition' | 'theorem' | 'remark' | 'property' | 'lemma'
+export interface StudyGroup { id: number; title: string; parentId: number | null; grammar?: boolean }
+interface StudyCardFields { id: number; groupId: number; front: string; back: string }
+export interface StudyPracticeMaterial extends StudyCardFields { kind: StudyKind }
+export interface GrammarExample { text: string; translation: string }
+export interface GrammarMistake { incorrect: string; correct: string }
+export interface GrammarContent { formula: string; examples?: GrammarExample[]; mistakes?: GrammarMistake[] }
+export interface GrammarRule extends StudyCardFields { kind: 'grammar_rule'; content: GrammarContent }
+export type StudyCard = StudyPracticeMaterial | GrammarRule
+export interface StudyData { groups: StudyGroup[]; cards: StudyCard[] }
+export interface StudyParse { cards: (StudyCard & {record: number})[]; errors: {record: number; line: number; code: string}[] }
+
+export interface StudyInputs {
+  groups: Omit<StudyGroup, 'id'>
+  cards: Omit<StudyPracticeMaterial, 'id'> | Omit<GrammarRule, 'id'>
+}
+
+export interface StudyReviewInput { id: string; cardId: number; known: boolean; reverse: boolean }
+export interface StudyReviewDay { day: string; total: number; known: number }
+export interface StudyStats { days: StudyReviewDay[]; total: number; known: number; activeDays: number; bestStreak: number }
+
+export interface StudyKnowledge { cardId: number; groupId: number; front: string; kind: StudyKind; groupTitle: string; score: number; total: number; known: number; lastReviewedAt: string | null }
+export interface StudyPracticeCard extends StudyPracticeMaterial { score: number }
+export interface StudyPracticeInput { groupId: number | null; cardIds: number[]; limit: number }
+export interface StudySelection { cards: StudyPracticeCard[]; available: number }

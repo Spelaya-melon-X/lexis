@@ -7,12 +7,11 @@
   import LevelBadge from '../../../lib/components/LevelBadge.svelte'
   import ProgressBar from '../../../lib/components/ProgressBar.svelte'
   import { formatDuration } from '../../../lib/dates'
-  import { errorText, t, type TKey } from '../../../lib/i18n/i18n.svelte'
+  import { errorText, t } from '../../../lib/i18n/i18n.svelte'
   import { session, type Active } from '../../../lib/state/session.svelte'
   import { toasts } from '../../../lib/state/toasts.svelte'
-  import { current, faces, finished, progress } from '../../../lib/training'
-  import FaceView from './FaceView.svelte'
-  import FlipCard from './FlipCard.svelte'
+  import { current, finished, progress } from '../../../lib/training'
+  import WordCard from './WordCard.svelte'
 
   let { active }: { active: Active } = $props()
 
@@ -24,13 +23,9 @@
   let requeued = $state<number | null>(null)
   let answered = $state(0) // счётчик ответов — ключ, чтобы подсказка под карточкой анимировалась заново
   let now = $state(Date.now())
-  let input: HTMLInputElement | undefined = $state()
+  let input = $state<HTMLInputElement>()
 
   const card = $derived(current(active.q))
-  const face = $derived(card ? faces(card, active.strategy) : null)
-  const prompt = $derived<TKey>(
-    face?.front.kind === 'sentence' ? 'training.promptSentence' : face?.front.kind === 'translation' ? 'training.promptTranslation' : 'training.promptTerm',
-  )
 
   // Таймер на экране — раз в секунду; cleanup эффекта останавливает его при уходе с экрана.
   $effect(() => {
@@ -38,15 +33,13 @@
     return () => clearInterval(id)
   })
 
-  // Новая карточка — фокус в поле ответа (после переворота назад).
   $effect(() => {
-    if (card && !revealed) input?.focus()
+    if (card && !revealed && !confirmFinish) input?.focus({ preventScroll: true })
   })
 
   function reveal() {
     if (!card || revealed) return
     revealed = true
-    input?.blur() // чтобы 1/2/3 шли в кнопки, а не в поле
   }
 
   async function answer(a: Answer) {
@@ -81,11 +74,12 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (confirmFinish || e.metaKey || e.ctrlKey || e.altKey) return
-    const inInput = e.target instanceof HTMLInputElement
+    if (!card || e.defaultPrevented || e.repeat || confirmFinish || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return
+    const target = e.target instanceof HTMLElement ? e.target : null
+    const inInput = target === input
+    const interactive = target?.closest('input, textarea, select, button, a, [contenteditable]')
     if (!revealed) {
-      // Enter — и из поля ответа; пробел — только вне поля (в поле это просто пробел)
-      if (e.key === 'Enter' || (e.key === ' ' && !inInput)) {
+      if ((e.key === 'Enter' && (inInput || !interactive)) || (e.key === ' ' && !interactive)) {
         e.preventDefault()
         reveal()
       }
@@ -93,7 +87,7 @@
     }
     const keys: Record<string, Answer> = { '1': 'good', '2': 'hard', '3': 'again' }
     const a = keys[e.key]
-    if (a && !inInput) {
+    if (a && !target?.closest('input, textarea, select, [contenteditable]')) {
       e.preventDefault()
       void answer(a)
     }
@@ -102,47 +96,40 @@
 
 <svelte:window {onkeydown} />
 
-<div class="session">
+<div class="session scroll">
   <header class="bar">
     <div class="info">
       <strong>#{active.groupName}</strong>
-      <span class="muted">· {t(`training.strategies.${active.strategy}.title`)}{#if active.free} · {t('training.free')}{/if}</span>
+      <span class="muted"> · {t(`training.directions.${active.strategy}`)}</span>
+      {#if active.free}<span class="muted"> · {t('training.free')}</span>{/if}
     </div>
     <span class="muted counter">{t('training.counter', { done: active.q.done, total: active.q.total })} · {formatDuration((now - active.startedAt) / 1000)}</span>
     <Button size="sm" variant="ghost" icon="x" disabled={busy} onclick={() => (confirmFinish = true)}>{t('training.finish')}</Button>
   </header>
   <ProgressBar value={progress(active.q)} label={t('training.counter', { done: active.q.done, total: active.q.total })} />
 
-  {#if card && face}
+  {#if card}
     <div class="stage">
-      <FlipCard flipped={revealed}>
-        {#snippet front()}
-          <span class="prompt muted">{t(prompt)}</span>
-          <FaceView face={face.front} />
-          <input
-            class="input answer-input"
-            bind:this={input}
-            bind:value={typed}
-            placeholder={t('training.yourAnswer')}
-            autocomplete="off"
-            spellcheck="false"
-          />
-        {/snippet}
-        {#snippet back()}
-          <FaceView face={face.back} />
-          {#if typed.trim()}
-            <p class="typed"><span class="muted">{t('training.typed')}:</span> {typed}</p>
-          {/if}
-          <LevelBadge level={card.level} />
-        {/snippet}
-      </FlipCard>
+      {#key answered}
+        <WordCard {card} {revealed} strategy={active.strategy} />
+      {/key}
+      <input
+        class="input answer-input"
+        bind:this={input}
+        bind:value={typed}
+        aria-label={t('training.yourAnswer')}
+        placeholder={t('training.yourAnswer')}
+        readonly={revealed}
+        autocomplete="off"
+        spellcheck="false"
+      />
 
       <div class="controls">
         {#if !revealed}
           <Button variant="primary" size="lg" onclick={reveal}>{t('training.show')}</Button>
           <span class="muted hint">{t('training.showHint')}</span>
         {:else}
-          <div class="answers" in:fade={{ duration: 150 }}>
+          <div class="answers">
             <button class="ans good" disabled={busy} onclick={() => answer('good')}><kbd>1</kbd>{t('training.good')}</button>
             <button class="ans hard" disabled={busy} onclick={() => answer('hard')}><kbd>2</kbd>{t('training.hard')}</button>
             <button class="ans again" disabled={busy} onclick={() => answer('again')}><kbd>3</kbd>{t('training.again')}</button>
@@ -180,6 +167,7 @@
     max-width: 720px;
     width: 100%;
     margin: 0 auto;
+    padding: 2px 6px 6px 2px;
   }
   .bar {
     display: flex;
@@ -198,25 +186,20 @@
     font-size: var(--fs-sm);
   }
   .stage {
-    flex: 1;
+    flex: 1 0 auto;
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: var(--s-4);
-    min-height: 0;
-  }
-  .prompt {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    padding-block: var(--s-3);
   }
   .answer-input {
     max-width: 360px;
     text-align: center;
+    align-self: center;
   }
-  .typed {
-    font-size: var(--fs-md);
+  .answer-input[readonly]:placeholder-shown {
+    visibility: hidden;
   }
   .controls {
     display: flex;
@@ -230,7 +213,7 @@
   }
   .answers {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--s-3);
     width: 100%;
   }
@@ -289,5 +272,16 @@
     display: inline-flex;
     align-items: center;
     gap: var(--s-2);
+  }
+  @media (max-width: 560px) {
+    .bar, .answers { gap: var(--s-2); }
+    .counter { font-size: var(--fs-xs); }
+    .ans {
+      min-height: 44px;
+      padding: var(--s-2);
+      font-size: var(--fs-sm);
+      overflow-wrap: anywhere;
+    }
+    kbd { display: none; }
   }
 </style>

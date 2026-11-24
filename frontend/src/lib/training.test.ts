@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TrainingCard } from './api/types'
-import { answer, createQueue, current, faces, finished, matchedForms, progress } from './training'
+import { answer, createQueue, current, finished, progress } from './training'
 
 const card = (id: number, extra: Partial<TrainingCard> = {}): TrainingCard => ({
   wordId: id,
@@ -63,55 +63,5 @@ describe('queue', () => {
     expect(answer(s, 'good')).toBe(s)
     expect(progress(s)).toBe(1)
     expect(finished(s)).toBe(true)
-  })
-})
-
-const verb = (sentence: string, highlights: { start: number; end: number }[]): TrainingCard =>
-  card(1, { term: 'go_went_gone', forms: ['go', 'went', 'gone'], translation: 'идти', example: { text: '', sentence, highlights } })
-
-describe('matchedForms', () => {
-  it.each([
-    { name: 'one form highlighted', c: verb('I went home', [{ start: 2, end: 6 }]), want: ['went'] },
-    { name: 'case-insensitive', c: verb('Went home', [{ start: 0, end: 4 }]), want: ['went'] },
-    { name: 'two forms, kept in form order', c: verb('gone and go', [{ start: 0, end: 4 }, { start: 9, end: 11 }]), want: ['go', 'gone'] },
-    { name: 'no match → all forms', c: verb('I am going', [{ start: 5, end: 10 }]), want: ['go', 'went', 'gone'] },
-    { name: 'no highlights → all forms', c: verb('I went home', []), want: ['go', 'went', 'gone'] },
-    { name: 'not a verb → []', c: card(2, { example: { text: '', sentence: 'An apple', highlights: [{ start: 3, end: 8 }] } }), want: [] },
-  ])('$name', ({ c, want }) => {
-    expect(matchedForms(c)).toEqual(want)
-  })
-})
-
-describe('faces', () => {
-  const plain = card(1, { term: 'apple', translation: 'яблоко' })
-  const v = card(2, { term: 'go_went_gone', forms: ['go', 'went', 'gone'], translation: 'идти' })
-
-  it('en_ru: term → translation', () => {
-    expect(faces(plain, 'en_ru')).toEqual({ front: { kind: 'term', text: 'apple' }, back: { kind: 'translation', text: 'яблоко' } })
-  })
-
-  it('ru_en: translation → all three forms', () => {
-    expect(faces(v, 'ru_en')).toEqual({ front: { kind: 'translation', text: 'идти' }, back: { kind: 'term', text: 'go – went – gone' } })
-  })
-
-  it('en_ru shows verb forms joined', () => {
-    expect(faces(v, 'en_ru').front).toEqual({ kind: 'term', text: 'go – went – gone' })
-  })
-
-  it('context: sentence → matched form + translation', () => {
-    const c = verb('I went home', [{ start: 2, end: 6 }])
-    expect(faces(c, 'context')).toEqual({
-      front: { kind: 'sentence', sentence: 'I went home', highlights: [{ start: 2, end: 6 }] },
-      back: { kind: 'answer', term: 'went', translation: 'идти' },
-    })
-  })
-
-  it('context, plain word: back shows the term', () => {
-    const c = card(3, { term: 'apple', translation: 'яблоко', example: { text: 'An [apple]', sentence: 'An apple', highlights: [{ start: 3, end: 8 }] } })
-    expect(faces(c, 'context').back).toEqual({ kind: 'answer', term: 'apple', translation: 'яблоко' })
-  })
-
-  it('context without example falls back to en_ru', () => {
-    expect(faces(plain, 'context')).toEqual(faces(plain, 'en_ru'))
   })
 })

@@ -10,10 +10,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"lexis/internal/ambitions"
+	ambitionstore "lexis/internal/ambitions/store"
 	"lexis/internal/importexport/store"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/db"
 	"lexis/internal/platform/httpx"
+	"lexis/internal/study"
+	studystore "lexis/internal/study/store"
 	"lexis/internal/words"
 )
 
@@ -45,15 +49,20 @@ type ImportResult struct {
 }
 
 type RestoreCounts struct {
-	Groups       int `json:"groups"`
-	Words        int `json:"words"`
-	Sessions     int `json:"sessions"`
-	Reviews      int `json:"reviews"`
-	Achievements int `json:"achievements"`
-	Days         int `json:"days"`     // 0 и для бэкапа без секции journal (v1)
-	Habits       int `json:"habits"`   // то же для секции habits
-	Tasks        int `json:"tasks"`    // то же для секции game (v3)
-	Workouts     int `json:"workouts"` // то же для секции sport (v3)
+	TimelineGoals int `json:"timelineGoals"`
+	StudyGroups   int `json:"studyGroups"`
+	StudyCards    int `json:"studyCards"`
+	Dreams        int `json:"dreams"`
+	Projects      int `json:"projects"`
+	Groups        int `json:"groups"`
+	Words         int `json:"words"`
+	Sessions      int `json:"sessions"`
+	Reviews       int `json:"reviews"`
+	Achievements  int `json:"achievements"`
+	Days          int `json:"days"`     // 0 и для бэкапа без секции journal (v1)
+	Habits        int `json:"habits"`   // то же для секции habits
+	Tasks         int `json:"tasks"`    // то же для секции game (v3)
+	Workouts      int `json:"workouts"` // то же для секции sport (v3)
 }
 
 // Import определяет формат по содержимому (см. DetectFormat) и импортирует.
@@ -204,6 +213,21 @@ func (s *Service) ExportBackup(ctx context.Context) (Backup, error) {
 		if b.Game, err = exportGame(ctx, q); err != nil {
 			return err
 		}
+		snap, e := ambitions.Read(ctx, tx)
+		if e != nil {
+			return e
+		}
+		b.Ambitions = &snap
+		learning, e := study.Read(ctx, tx)
+		if e != nil {
+			return e
+		}
+		b.Study = &learning
+		history, e := study.ReadHistory(ctx, tx)
+		if e != nil {
+			return e
+		}
+		b.StudyHistory = &history
 		b.Sport, err = exportSport(ctx, q)
 		return err
 	})
@@ -316,7 +340,60 @@ func (s *Service) Restore(ctx context.Context, b Backup) (RestoreCounts, error) 
 			}
 		}
 
+		if b.Ambitions != nil {
+			aq := ambitionstore.New(tx)
+			if err := aq.LockAmbitions(ctx); err != nil {
+				return err
+			}
+			if err := ambitions.Write(ctx, tx, nil, *b.Ambitions); err != nil {
+				return err
+			}
+			if err := aq.AdvanceIDs(ctx, b.Ambitions.MaxID()); err != nil {
+				return err
+			}
+		}
+		if b.Study != nil {
+			sq := studystore.New(tx)
+			if err := sq.LockStudy(ctx); err != nil {
+				return err
+			}
+			library := *b.Study
+			if b.Version < 7 {
+				preserved, err := study.PreserveGrammar(ctx, tx, library)
+				if err != nil {
+					return err
+				}
+				library = preserved
+			}
+			if err := study.Write(ctx, tx, library); err != nil {
+				return err
+			}
+			if err := sq.AdvanceIDs(ctx, library.MaxID()); err != nil {
+				return err
+			}
+		}
+		if b.StudyHistory != nil {
+			sq := studystore.New(tx)
+			if err := sq.LockStudy(ctx); err != nil {
+				return err
+			}
+			if err := study.WriteHistory(ctx, tx, *b.StudyHistory); err != nil {
+				return err
+			}
+		}
 		c = RestoreCounts{Groups: len(b.Groups), Words: len(b.Words), Sessions: len(b.Sessions), Reviews: len(reviews), Achievements: len(b.Achievements)}
+		if b.Ambitions != nil {
+			if b.Ambitions.Timeline != nil {
+				c.TimelineGoals = len(b.Ambitions.Timeline.Goals)
+			}
+			c.Dreams = len(b.Ambitions.Dreams)
+			c.Projects = len(b.Ambitions.Projects)
+		}
+
+		if b.Study != nil {
+			c.StudyGroups = len(b.Study.Groups)
+			c.StudyCards = len(b.Study.Cards)
+		}
 		if b.Journal != nil {
 			if err := restoreJournal(ctx, q, *b.Journal); err != nil {
 				return fmt.Errorf("journal: %w", err)
@@ -680,6 +757,22 @@ func (s *Service) Reset(ctx context.Context, scope string) error {
 		}
 		if err := q.TruncateSport(ctx); err != nil {
 			return fmt.Errorf("sport: %w", err)
+		}
+		if err := ambitionstore.New(tx).LockAmbitions(ctx); err != nil {
+			return err
+		}
+		sq := studystore.New(tx)
+		if err := sq.LockStudy(ctx); err != nil {
+			return err
+		}
+		if err := study.WriteHistory(ctx, tx, []study.Review{}); err != nil {
+			return err
+		}
+		if err := study.Write(ctx, tx, study.Empty()); err != nil {
+			return err
+		}
+		if err := ambitions.Write(ctx, tx, nil, ambitions.Empty()); err != nil {
+			return err
 		}
 		return nil
 	})

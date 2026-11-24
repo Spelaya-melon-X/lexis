@@ -2,6 +2,7 @@ package importexport
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -205,7 +206,7 @@ func TestDecodeBackup(t *testing.T) {
 	_, err = DecodeBackup([]byte(`{"version":1,"wordz":[]}`))
 	assertCode(t, err, "invalid_backup") // неизвестное поле — не наш файл
 
-	_, err = DecodeBackup([]byte(`{"version":4}`))
+	_, err = DecodeBackup([]byte(fmt.Sprintf(`{"version":%d}`, BackupVersion+1)))
 	assertCode(t, err, "unsupported_backup_version")
 
 	_, err = DecodeBackup([]byte(`{"version":1,"exportedAt":"вчера"}`))
@@ -309,5 +310,31 @@ func TestFillPlanStarts(t *testing.T) {
 	got := fillPlanStarts(items)
 	if want := []int16{660, 540, 1200, 540}; !reflect.DeepEqual(got, want) {
 		t.Errorf("starts = %v, want %v", got, want)
+	}
+}
+
+func TestAmbitionsBackupValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		version int
+		raw     string
+		want    string
+	}{
+		{"v4 empty", 4, `{"categories":[],"dreams":[],"projects":[],"steps":[],"dependencies":[]}`, ""},
+		{"v3 forbidden", 3, `{}`, "invalid_backup"},
+		{"dangling dream", 4, `{"dreams":[{"id":1,"title":"Paris","status":"want","projectId":99}]}`, "invalid_backup"},
+		{"unknown nested field", 4, `{"projects":[{"id":1,"title":"Trip","unknown":true}]}`, "invalid_backup"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"version":%d,"ambitions":%s}`, tt.version, tt.raw)
+			_, err := DecodeBackup([]byte(raw))
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				assertCode(t, err, tt.want)
+			}
+		})
 	}
 }

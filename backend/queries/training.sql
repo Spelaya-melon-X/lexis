@@ -6,7 +6,8 @@ SELECT EXISTS (SELECT 1 FROM groups WHERE id = $1);
 -- name: ListSessionWords :many
 -- Кандидаты в сессию. Обычная: не архив и (новое или due до конца сегодняшнего дня);
 -- free: все слова группы. Группа — с поддеревом (§18.2); EXISTS, а не JOIN, — чтобы слово
--- из двух подгрупп пришло один раз. Раскладку по корзинам делает training.Build.
+-- из двух подгрупп пришло один раз. selected ограничивает кандидатов временной выборкой;
+-- для проверки всех её ссылок сервис читает с free=true, затем применяет режим через Build.
 WITH RECURSIVE sub (id) AS (
     SELECT @group_id::bigint
     UNION ALL
@@ -15,12 +16,13 @@ WITH RECURSIVE sub (id) AS (
 SELECT w.id, w.term, w.forms, w.translation, w.level, w.next_review_at
 FROM words w
 WHERE EXISTS (SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub))
+  AND (NOT @selected::bool OR w.id = ANY(@word_ids::bigint[]))
   AND (@free::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < @day_end)));
 
 -- name: ListExamplesByWordIDs :many
 SELECT word_id, sentence FROM word_examples
 WHERE word_id = ANY(@word_ids::bigint[])
-ORDER BY word_id, position;
+ORDER BY word_id, position, id;
 
 -- name: GetSetting :one
 SELECT value FROM settings WHERE key = $1;

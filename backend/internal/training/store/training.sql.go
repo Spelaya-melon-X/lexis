@@ -187,7 +187,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (i
 const listExamplesByWordIDs = `-- name: ListExamplesByWordIDs :many
 SELECT word_id, sentence FROM word_examples
 WHERE word_id = ANY($1::bigint[])
-ORDER BY word_id, position
+ORDER BY word_id, position, id
 `
 
 type ListExamplesByWordIDsRow struct {
@@ -257,20 +257,23 @@ func (q *Queries) ListLevelChanges(ctx context.Context, sessionID int64) ([]List
 
 const listSessionWords = `-- name: ListSessionWords :many
 WITH RECURSIVE sub (id) AS (
-    SELECT $3::bigint
+    SELECT $5::bigint
     UNION ALL
     SELECT c.id FROM groups c JOIN sub ON c.parent_id = sub.id
 )
 SELECT w.id, w.term, w.forms, w.translation, w.level, w.next_review_at
 FROM words w
 WHERE EXISTS (SELECT 1 FROM word_groups wg WHERE wg.word_id = w.id AND wg.group_id IN (SELECT id FROM sub))
-  AND ($1::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < $2)))
+  AND (NOT $1::bool OR w.id = ANY($2::bigint[]))
+  AND ($3::bool OR (w.level < 5 AND (w.level = 1 OR w.next_review_at < $4)))
 `
 
 type ListSessionWordsParams struct {
-	Free    bool
-	DayEnd  time.Time
-	GroupID int64
+	Selected bool
+	WordIds  []int64
+	Free     bool
+	DayEnd   time.Time
+	GroupID  int64
 }
 
 type ListSessionWordsRow struct {
@@ -284,9 +287,16 @@ type ListSessionWordsRow struct {
 
 // Кандидаты в сессию. Обычная: не архив и (новое или due до конца сегодняшнего дня);
 // free: все слова группы. Группа — с поддеревом (§18.2); EXISTS, а не JOIN, — чтобы слово
-// из двух подгрупп пришло один раз. Раскладку по корзинам делает training.Build.
+// из двух подгрупп пришло один раз. selected ограничивает кандидатов временной выборкой;
+// для проверки всех её ссылок сервис читает с free=true, затем применяет режим через Build.
 func (q *Queries) ListSessionWords(ctx context.Context, arg ListSessionWordsParams) ([]ListSessionWordsRow, error) {
-	rows, err := q.db.Query(ctx, listSessionWords, arg.Free, arg.DayEnd, arg.GroupID)
+	rows, err := q.db.Query(ctx, listSessionWords,
+		arg.Selected,
+		arg.WordIds,
+		arg.Free,
+		arg.DayEnd,
+		arg.GroupID,
+	)
 	if err != nil {
 		return nil, err
 	}

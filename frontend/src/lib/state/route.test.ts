@@ -6,6 +6,8 @@ describe('parseHash', () => {
     { hash: '', want: { section: 'english', page: 'add', rest: '' } },
     { hash: '#', want: { section: 'english', page: 'add', rest: '' } },
     { hash: '#/', want: { section: 'english', page: 'add', rest: '' } },
+    { hash: '#/dreams/list', want: { section: 'dreams', page: 'list', rest: '' } },
+    { hash: '#/game/projects/42', want: { section: 'game', page: 'projects', rest: '42' } },
     // новый формат
     { hash: '#/english/groups', want: { section: 'english', page: 'groups', rest: '' } },
     { hash: '#/english/groups/12', want: { section: 'english', page: 'groups', rest: '12' } },
@@ -16,6 +18,9 @@ describe('parseHash', () => {
     { hash: '#/game', want: { section: 'game', page: 'plan', rest: '' } },
     { hash: '#/sport', want: { section: 'sport', page: 'workouts', rest: '' } },
     { hash: '#/sport/workouts/2026-11-02', want: { section: 'sport', page: 'workouts', rest: '2026-11-02' } },
+    { hash: '#/dreams/timeline', want: { section: 'dreams', page: 'timeline', rest: '' } },
+    { hash: '#/study/stats', want: { section: 'study', page: 'stats', rest: '' } },
+    { hash: '#/study/cards', want: { section: 'study', page: 'cards', rest: '' } },
     { hash: '#/sport/exercises/7', want: { section: 'sport', page: 'exercises', rest: '7' } },
     { hash: '#/game/plan/2026-11-06', want: { section: 'game', page: 'plan', rest: '2026-11-06' } },
     { hash: '#/game/board/7', want: { section: 'game', page: 'board', rest: '7' } },

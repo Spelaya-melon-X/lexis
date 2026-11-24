@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api } from '../../../lib/api/client'
-  import type { Group, Strategy } from '../../../lib/api/types'
+  import type { Group, TrainingDirection } from '../../../lib/api/types'
   import Button from '../../../lib/components/Button.svelte'
   import Card from '../../../lib/components/Card.svelte'
   import Icon from '../../../lib/components/Icon.svelte'
@@ -11,9 +11,7 @@
   import { route } from '../../../lib/state/route.svelte'
   import { session } from '../../../lib/state/session.svelte'
   import { toasts } from '../../../lib/state/toasts.svelte'
-
-  const STRATEGIES: Strategy[] = ['en_ru', 'ru_en', 'context']
-  const STRATEGY_KEY = 'lexis.strategy'
+  import DirectionSelect from './DirectionSelect.svelte'
 
   let groups = $state<Group[] | null>(null)
   let loadError = $state<string | null>(null)
@@ -21,8 +19,8 @@
   let groupId = $state<number | null>(
     /^\d+$/.test(route.rest) ? Number(route.rest) : (session.active?.groupId ?? null),
   )
-  let strategy = $state<Strategy>(savedStrategy())
   let free = $state(false)
+  let strategy = $state<TrainingDirection>(session.active?.strategy ?? 'en_ru')
   let starting = $state(false)
   let nothingDue = $state(false)
 
@@ -30,16 +28,6 @@
   // Порядок дерева (родитель, потом его подгруппы); у подгруппы перед именем — путь предков.
   // Тренировка группы берёт слова всех её подгрупп (§18.2), due — тоже по поддереву.
   const rows = $derived(groups ? visibleRows(groups) : [])
-
-  function savedStrategy(): Strategy {
-    try {
-      const v = localStorage.getItem(STRATEGY_KEY)
-      if (v === 'en_ru' || v === 'ru_en' || v === 'context') return v
-    } catch {
-      // нет localStorage — по умолчанию
-    }
-    return 'en_ru'
-  }
 
   async function load() {
     try {
@@ -52,21 +40,18 @@
   onMount(load)
 
   async function start(asFree = free) {
-    if (!selected || starting) return
+    const group = selected
+    const direction = strategy
+    if (!group || starting) return
     starting = true
     nothingDue = false
     try {
-      localStorage.setItem(STRATEGY_KEY, strategy)
-    } catch {
-      // не страшно
-    }
-    try {
-      const res = await api.training.start(selected.id, strategy, asFree)
+      const res = await api.training.start(group.id, direction, asFree)
       if (res.sessionId === null) {
         nothingDue = true // сервер не создал сессию: на сегодня карточек нет (§7)
         return
       }
-      session.begin({ sessionId: res.sessionId, groupId: selected.id, groupName: selected.name, strategy, free: asFree }, res.cards)
+      session.begin({ sessionId: res.sessionId, groupId: group.id, groupName: group.name, strategy: direction, free: asFree }, res.cards)
     } catch (e) {
       toasts.error(errorText(e))
     } finally {
@@ -104,17 +89,7 @@
       </div>
     </section>
 
-    <section>
-      <h2>{t('training.strategy')}</h2>
-      <div class="strategies">
-        {#each STRATEGIES as s (s)}
-          <button class="strategy" class:active={s === strategy} aria-pressed={s === strategy} onclick={() => (strategy = s)}>
-            <span class="s-title">{t(`training.strategies.${s}.title`)}</span>
-            <span class="s-desc muted">{t(`training.strategies.${s}.desc`)}</span>
-          </button>
-        {/each}
-      </div>
-    </section>
+    <DirectionSelect bind:value={strategy} disabled={starting} />
 
     <label class="free">
       <input type="checkbox" bind:checked={free} />
@@ -160,8 +135,7 @@
     flex-wrap: wrap;
     gap: var(--s-2);
   }
-  .group,
-  .strategy {
+  .group {
     border: var(--bw) solid var(--c-border);
     border-radius: var(--radius-sm);
     background: var(--c-surface);
@@ -170,13 +144,11 @@
       transform var(--dur-fast) var(--ease-out),
       box-shadow var(--dur-fast) var(--ease-out);
   }
-  .group:hover,
-  .strategy:hover {
+  .group:hover {
     transform: translate(-1px, -1px);
     box-shadow: var(--shadow-sm);
   }
-  .group.active,
-  .strategy.active {
+  .group.active {
     background: var(--c-green-soft);
     box-shadow: var(--shadow);
   }
@@ -210,25 +182,6 @@
     background: var(--c-line);
     color: var(--c-muted);
   }
-  .strategies {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: var(--s-3);
-  }
-  .strategy {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-    padding: var(--s-3) var(--s-4);
-    text-align: left;
-  }
-  .s-title {
-    font-size: var(--fs-lg);
-    font-weight: 800;
-  }
-  .s-desc {
-    font-size: var(--fs-sm);
-  }
   .free {
     display: flex;
     align-items: baseline;
@@ -259,10 +212,5 @@
     align-content: center;
     gap: var(--s-3);
     text-align: center;
-  }
-  @media (max-width: 860px) {
-    .strategies {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

@@ -8,8 +8,10 @@ import { defineConfig } from 'vitest/config'
 // Prod: `npm run build` → dist/, Dockerfile встраивает его в бинарник (backend/web).
 const api = process.env.LEXIS_API_URL ?? 'http://127.0.0.1:8090'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [svelte()],
+  // Vitest workers must use Svelte's client entry point when mounting in jsdom.
+  ...(mode === 'test' ? { resolve: { conditions: ['browser'] } } : {}),
   server: {
     proxy: {
       '/api': api,
@@ -21,8 +23,9 @@ export default defineConfig({
     target: 'es2022',
   },
   test: {
-    // Тестируем только чистую логику в .ts — DOM не нужен.
+    // Компонентные тесты подключают jsdom через @vitest-environment.
     include: ['src/**/*.test.ts'],
     environment: 'node',
+    server: { deps: { inline: ['svelte'] } },
   },
-})
+}))

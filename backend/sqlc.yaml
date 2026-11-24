@@ -145,3 +145,23 @@ sql:
         out: internal/sport/store
         sql_package: pgx/v5
         emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/ambitions.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/ambitions/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+
+  - engine: postgresql
+    queries: queries/study.sql
+    schema: migrations
+    gen:
+      go:
+        package: store
+        out: internal/study/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true

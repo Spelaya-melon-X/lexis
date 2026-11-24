@@ -13,6 +13,14 @@ type Achievement struct {
 	UnlockedAt time.Time
 }
 
+type BigProject struct {
+	ID       int64
+	Title    string
+	Note     string
+	Deadline *time.Time
+	Position int32
+}
+
 type Day struct {
 	Day       time.Time
 	Rating    *int16
@@ -33,6 +41,23 @@ type DopamineSlot struct {
 	Slot      int16
 	Text      string
 	UpdatedAt time.Time
+}
+
+type Dream struct {
+	ID         int64
+	Title      string
+	Note       string
+	Deadline   *time.Time
+	Status     string
+	Position   int32
+	CategoryID *int64
+	ProjectID  *int64
+}
+
+type DreamCategory struct {
+	ID       int64
+	Title    string
+	Position int32
 }
 
 type Exercise struct {
@@ -145,6 +170,17 @@ type PointsLedger struct {
 	RewardID       *int64
 }
 
+type ProjectStep struct {
+	ID        int64
+	ProjectID int64
+	ParentID  *int64
+	Title     string
+	Note      string
+	Deadline  *time.Time
+	Position  int32
+	Done      bool
+}
+
 type Review struct {
 	ID             int64
 	SessionID      int64
@@ -176,6 +212,36 @@ type Setting struct {
 	Value []byte
 }
 
+type StepDependency struct {
+	ProjectID  int64
+	StepID     int64
+	RequiresID int64
+}
+
+type StudyCard struct {
+	ID             int64
+	GroupID        int64
+	Kind           string
+	Front          string
+	Back           string
+	GrammarContent []byte
+}
+
+type StudyGroup struct {
+	ID       int64
+	Title    string
+	ParentID *int64
+	Grammar  bool
+}
+
+type StudyReview struct {
+	ID         string
+	CardID     int64
+	ReviewedAt time.Time
+	Known      bool
+	Reverse    bool
+}
+
 type Task struct {
 	ID         int64
 	Title      string
@@ -205,6 +271,19 @@ type TaskType struct {
 	Color     *string
 	Position  int32
 	CreatedAt time.Time
+}
+
+type TimelineGoal struct {
+	ID      int64
+	Year    int32
+	Month   *int32
+	Title   string
+	Note    string
+	DreamID *int64
+}
+
+type TimelineYear struct {
+	Year int32
 }
 
 type TrainingSession struct {

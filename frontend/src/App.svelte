@@ -50,7 +50,7 @@
     <nav class="sections" aria-label={t('nav.sections')}>
       {#each sections as s (s.id)}
         {@const active = s.id === route.section}
-        <a href={route.sectionHref(s.id)} class="section" class:active aria-current={active ? 'page' : undefined}>
+        <a href={route.sectionHref(s.id)} class="section" class:active aria-label={t(s.label)} title={t(s.label)} aria-current={active ? 'page' : undefined}>
           <Icon name={s.icon} size={18} />
           <span>{t(s.label)}</span>
           <!-- напоминания (§17.11): точка — день не оценён вечером, число — неотмеченные привычки -->
@@ -294,7 +294,7 @@
   }
 
   /* Узкое окно: подписи прячем, остаются иконки; сайдбар — колонка иконок */
-  @media (max-width: 860px) {
+  @media (max-width: 1100px) {
     .section span,
     .page span {
       display: none;
@@ -307,4 +307,13 @@
       padding: var(--s-3) var(--s-1);
     }
   }
+  @media (max-width: 600px) {
+    header { gap: var(--s-1); padding: 0 var(--s-2); }
+    .logo span { display: none; }
+    .logo, .gear, .lang { flex-shrink: 0; }
+    .sections { min-width: 0; overflow-x: auto; }
+    .section { padding: var(--s-2); }
+    .lang button { padding: var(--s-1); }
+  }
+
 </style>

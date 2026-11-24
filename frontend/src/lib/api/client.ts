@@ -1,5 +1,7 @@
 import type {
+  TimelineInput, StudyData, StudyParse, StudyInputs, StudyReviewInput, StudyStats, StudyKnowledge, StudyPracticeInput, StudySelection,
   Achievement,
+  Ambitions, AmbitionKind, AmbitionInput, AmbitionFields,
   AnswerResult,
   BulkResult,
   Calendar,
@@ -52,7 +54,7 @@ import type {
   Range,
   Settings,
   StartResult,
-  Strategy,
+  TrainingDirection,
   Answer,
   Trends,
   Word,
@@ -141,6 +143,31 @@ const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body)
 
 /** Все эндпоинты бэкенда (SPEC §11) — одна точка, чтобы URL не расползались по компонентам. */
 export const api = {
+  timeline: {
+    create: (input: TimelineInput) => post<Ambitions>('/ambitions/goals', input),
+    update: (id: number, input: TimelineInput) => request<Ambitions>('PUT', `/ambitions/goals/${id}`, input),
+    remove: (id: number) => request<Ambitions>('DELETE', `/ambitions/goals/${id}`),
+    addYear: (year: number) => post<Ambitions>('/ambitions/years', { year }),
+  },
+  study: {
+    knowledge: () => get<StudyKnowledge[]>('/study/knowledge'),
+    practice: (input: StudyPracticeInput) => post<StudySelection>('/study/practice',input),
+    review: (input: StudyReviewInput) => post<void>('/study/reviews', input),
+    stats: (days: number) => get<StudyStats>(`/study/stats?days=${days}`),
+    get: () => get<StudyData>('/study'),
+    create: <K extends keyof StudyInputs>(kind: K, input: StudyInputs[K]) => post<StudyData>(`/study/${kind}`, input),
+    update: <K extends keyof StudyInputs>(kind: K, id: number, input: StudyInputs[K]) => request<StudyData>('PUT', `/study/${kind}/${id}`, input),
+    remove: (kind: keyof StudyInputs, id: number) => request<StudyData>('DELETE', `/study/${kind}/${id}`),
+    parse: (text: string, grammar = false) => post<StudyParse>('/study/parse', grammar ? { text, grammar } : { text }),
+    bulk: (groupId: number, text: string) => post<StudyData>('/study/bulk', { groupId, text }),
+  },
+  ambitions: {
+    get: () => get<Ambitions>('/ambitions'),
+    create: (kind: AmbitionKind, input: AmbitionInput) => post<Ambitions>(`/ambitions/${kind}`, input),
+    update: (kind: AmbitionKind, id: number, input: AmbitionInput) => request<Ambitions>('PUT', `/ambitions/${kind}/${id}`, input),
+    remove: (kind: AmbitionKind, id: number) => request<Ambitions>('DELETE', `/ambitions/${kind}/${id}`),
+    convert: (id: number, input: AmbitionFields) => post<Ambitions>(`/ambitions/dreams/${id}/project`, input),
+  },
   words: {
     parse: (text: string) => post<ParseResult>('/words/parse', { text }),
     bulk: (text: string) => post<BulkResult>('/words/bulk', { text }),
@@ -157,8 +184,8 @@ export const api = {
     remove: (id: number, children: GroupChildren = 'lift') => request<void>('DELETE', `/groups/${id}${qs({ children })}`),
   },
   training: {
-    start: (groupId: number, strategy: Strategy, free = false) =>
-      post<StartResult>('/training/start', { groupId, strategy, free }),
+    start: (groupId: number, strategy: TrainingDirection, free = false, wordIds?: number[]) =>
+      post<StartResult>('/training/start', { groupId, strategy, free, ...(wordIds === undefined ? {} : { wordIds }) }),
     answer: (sessionId: number, wordId: number, answer: Answer) =>
       post<AnswerResult>(`/training/${sessionId}/answer`, { wordId, answer }),
     finish: (sessionId: number) => post<FinishResult>(`/training/${sessionId}/finish`),

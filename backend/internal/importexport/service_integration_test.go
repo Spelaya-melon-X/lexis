@@ -406,7 +406,7 @@ func TestRestore_V1KeepsJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.Version, b.Journal, b.Habits, b.Game, b.Sport = 1, nil, nil, nil, nil
+	b.Version, b.Journal, b.Habits, b.Game, b.Sport, b.Ambitions, b.Study, b.StudyHistory = 1, nil, nil, nil, nil, nil, nil, nil
 	b.Words = b.Words[:1]
 	b.Sessions = nil
 	for i := range b.Groups { // в настоящем v1-файле поля parentId нет

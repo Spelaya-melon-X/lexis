@@ -8,10 +8,12 @@ import (
 	"slices"
 	"time"
 
+	"lexis/internal/ambitions"
 	"lexis/internal/groups/tree"
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/httpx"
 	"lexis/internal/sport"
+	"lexis/internal/study"
 	tasksmod "lexis/internal/tasks" // tasks — уже имя поля секции; алиас, чтобы не путать
 )
 
@@ -22,12 +24,19 @@ import (
 // как есть: новых секций в них нет, и эти разделы при восстановлении не трогаются.
 // v3 (§18.1) = v2 + groups[].parentId (дерево групп) + необязательная секция game.
 // В v1/v2 их нет — все группы корневые, «Игра» при восстановлении не трогается.
-const BackupVersion = 3
+// v4 = v3 + optional ambitions (wishes, projects and their dependency trees).
+// v5 = v4 + optional ambitions.timeline and study (Markdown learning cards).
+// v6 = v5 + optional studyHistory (rated presentations).
+// v7 = v6 + grammar topics and rules in study.
+const BackupVersion = 7
 
 // Backup — полный снимок данных (§4: слова, группы, уровни, история).
 // id внутри файла — только для ссылок между сущностями: при восстановлении
 // записи получают новые id, ссылки переназначаются.
 type Backup struct {
+	StudyHistory *[]study.Review            `json:"studyHistory,omitempty"`
+	Study        *study.Snapshot            `json:"study,omitempty"`
+	Ambitions    *ambitions.Snapshot        `json:"ambitions,omitempty"`
 	Version      int                        `json:"version"`
 	ExportedAt   time.Time                  `json:"exportedAt"`
 	Settings     map[string]json.RawMessage `json:"settings"`
@@ -454,6 +463,40 @@ func validateBackup(b Backup) error {
 		}
 		if err := validateSport(*b.Sport, bad); err != nil {
 			return err
+		}
+	}
+	if b.StudyHistory != nil {
+		if b.Version < 6 {
+			return bad("studyHistory requires version 6")
+		}
+		if err := study.ValidateHistory(*b.StudyHistory); err != nil {
+			return bad("studyHistory: %v", err)
+		}
+	}
+	if b.Study != nil {
+		if b.Version < 5 {
+			return bad("study requires version 5")
+		}
+		if err := b.Study.Validate(); err != nil {
+			return bad("study: %v", err)
+		}
+		if b.Version < 7 {
+			for _, g := range b.Study.Groups {
+				if g.Grammar {
+					return bad("grammar requires version 7")
+				}
+			}
+		}
+	}
+	if b.Ambitions != nil && b.Ambitions.Timeline != nil && b.Version < 5 {
+		return bad("timeline requires version 5")
+	}
+	if b.Ambitions != nil {
+		if b.Version < 4 {
+			return bad("version %d cannot contain ambitions", b.Version)
+		}
+		if err := b.Ambitions.Validate(); err != nil {
+			return bad("ambitions: %v", err)
 		}
 	}
 	if b.Habits != nil {

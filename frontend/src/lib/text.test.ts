@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayTerm, segments } from './text'
+import { displayTerm, exampleHighlights, segments } from './text'
 
 const seg = (text: string, highlight = false) => ({ text, highlight })
 
@@ -33,5 +33,23 @@ describe('displayTerm', () => {
   it('plain term as is', () => {
     expect(displayTerm('well-known')).toBe('well-known')
     expect(displayTerm('apple', [])).toBe('apple')
+  })
+})
+
+describe('example highlights', () => {
+  it('keeps explicit markup ahead of automatic matches', () => {
+    const highlights = [{ start: 5, end: 9 }]
+    expect(exampleHighlights({ text: 'Walk [here]', sentence: 'Walk here', highlights }, 'walk')).toEqual(highlights)
+  })
+
+  it('matches verb forms at word boundaries and returns code point offsets', () => {
+    const sentence = '🍎 Went home and had gone. Then go, but going is different.'
+    const spans = exampleHighlights({ text: sentence, sentence }, 'go_went_gone', ['go', 'went', 'gone'])
+    expect(segments(sentence, spans).filter((part) => part.highlight).map((part) => part.text)).toEqual(['Went', 'gone', 'go'])
+  })
+
+  it('treats punctuation in a phrase literally', () => {
+    const sentence = 'I learned C++, then C.'
+    expect(exampleHighlights({ text: sentence, sentence }, 'C++')).toEqual([{ start: 10, end: 13 }])
   })
 })

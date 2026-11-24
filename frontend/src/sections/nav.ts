@@ -1,6 +1,12 @@
 // Карта навигации (§17.1): что показывать для каждого раздела/подраздела.
 // Сами id и порядок — в lib/state/route.ts (SECTIONS); Record<Page<S>, …> заставляет
 // описать здесь каждый подраздел — забытый ловит svelte-check.
+import Dreams from './dreams/Dreams.svelte'
+import Timeline from './dreams/Timeline.svelte'
+import Study from './study/Study.svelte'
+import Grammar from './study/Grammar.svelte'
+import StudyStats from './study/Stats.svelte'
+import Projects from './game/Projects/Projects.svelte'
 import type { Component } from 'svelte'
 import type { IconName } from '../lib/components/Icon.svelte'
 import type { TKey } from '../lib/i18n/i18n.svelte'
@@ -53,6 +59,7 @@ const NAV: { [S in Section]: SectionDef<S> } = {
       add: { icon: 'cards', label: 'nav.english.add', view: AddWords },
       groups: { icon: 'folder', label: 'nav.english.groups', view: Groups },
       training: { icon: 'play', label: 'nav.english.training', view: Training },
+      grammar: { icon: 'note', label: 'nav.english.grammar', view: Grammar },
       stats: { icon: 'chart', label: 'nav.english.stats', view: Stats },
       settings: { icon: 'settings', label: 'nav.english.settings', view: Settings },
     },
@@ -84,12 +91,15 @@ const NAV: { [S in Section]: SectionDef<S> } = {
     pages: {
       plan: { icon: 'clock', label: 'nav.game.plan', view: GamePlan },
       board: { icon: 'board', label: 'nav.game.board', view: GameBoard },
+      projects: { icon: 'target', label: 'nav.game.projects', view: Projects },
       focus: { icon: 'target', label: 'nav.game.focus', view: GameFocus },
       shop: { icon: 'trophy', label: 'nav.game.shop', view: GameShop },
       stats: { icon: 'chart', label: 'nav.game.stats', view: GameStats },
       settings: { icon: 'settings', label: 'nav.game.settings', view: GameSettings },
     },
   },
+  dreams: { icon: 'target', label: 'nav.section.dreams', pages: { list: { icon: 'target', label: 'nav.dreams.list', view: Dreams }, timeline: { icon: 'calendar', label: 'nav.dreams.timeline', view: Timeline } } },
+  study: { icon: 'book', label: 'nav.section.study', pages: { cards: { icon: 'cards', label: 'nav.study.cards', view: Study }, stats: { icon: 'chart', label: 'nav.study.stats', view: StudyStats } } },
   sport: {
     icon: 'dumbbell',
     label: 'nav.section.sport',

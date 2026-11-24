@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { ApiError, errorFromResponse, qs } from './client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api, ApiError, errorFromResponse, qs } from './client'
 
 describe('errorFromResponse', () => {
   it.each([
@@ -50,5 +50,38 @@ describe('qs', () => {
     { params: { q: 'a b&c' }, want: '?q=a+b%26c' },
   ])('$params → "$want"', ({ params, want }) => {
     expect(qs(params)).toBe(want)
+  })
+})
+
+
+describe('training start contract', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('sends either direction and includes a word selection only when provided', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({sessionId:1,cards:[]}))))
+    vi.stubGlobal('fetch',fetch)
+    await api.training.start(7,'en_ru')
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({groupId:7,strategy:'en_ru',free:false})
+    await api.training.start(7,'ru_en',true,[2,4])
+    expect(JSON.parse(fetch.mock.calls[1]![1].body)).toEqual({groupId:7,strategy:'ru_en',free:true,wordIds:[2,4]})
+    await api.training.start(7,'ru_en',false,[])
+    expect(JSON.parse(fetch.mock.calls[2]![1].body).wordIds).toEqual([])
+  })
+})
+
+describe('study review history contract', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('keeps the same answer ID on retry and sends period selection', async () => {
+    const fetch = vi.fn().mockImplementation((url: string) => Promise.resolve(
+      url.includes('/reviews') ? new Response(null, {status: 204}) : new Response(JSON.stringify({days: [], total: 0, known: 0, activeDays: 0, bestStreak: 0})),
+    ))
+    vi.stubGlobal('fetch', fetch)
+    const input = {id: 'a1111111-1111-4111-8111-111111111111', cardId: 12, known: true, reverse: false}
+    await api.study.review(input)
+    await api.study.review(input)
+    expect(fetch.mock.calls[0]![0]).toBe('/api/study/reviews')
+    expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual(input)
+    expect(fetch.mock.calls[0]![1].body).toBe(fetch.mock.calls[1]![1].body)
+    await api.study.stats(90)
+    expect(fetch.mock.calls[2]![0]).toBe('/api/study/stats?days=90')
   })
 })

@@ -23,6 +23,7 @@ import (
 	"lexis/internal/platform/clock"
 	"lexis/internal/platform/db/dbtest"
 	"lexis/internal/platform/eventbus"
+	"lexis/internal/words"
 )
 
 type fakeBus struct {
@@ -230,31 +231,48 @@ func TestService_Start_NewWordsLimit(t *testing.T) {
 	}
 }
 
-func TestService_Start_Context(t *testing.T) {
+func examples(texts ...string) []words.Example {
+	out := make([]words.Example, len(texts))
+	for i, text := range texts {
+		out[i], _ = words.ParseExample(text)
+	}
+	return out
+}
+
+func TestService_Start_WordCards(t *testing.T) {
 	env := newTestEnv(t)
 	g := env.group(t, "g")
 	verb := env.word(t, g, "go_went_gone", 2, at(9, 0, 0), "I [go]", "I [went]", "I have [gone]")
 	plain := env.word(t, g, "apple", 2, at(9, 0, 0), "An [apple]", "Red [apple]")
 	bare := env.word(t, g, "pear", 2, at(9, 0, 0))
 
-	res := env.mustStart(t, StartParams{GroupID: g, Strategy: StrategyContext})
-	byWord := map[int64][]Card{}
-	for _, c := range res.Cards {
-		byWord[c.WordID] = append(byWord[c.WordID], c)
-	}
-	if n := len(byWord[verb]); n != 3 {
-		t.Errorf("verb subcards = %d, want 3", n)
-	}
-	for _, c := range byWord[verb] {
-		if c.Example == nil || len(c.Example.Highlights) != 1 || !reflect.DeepEqual(c.Forms, []string{"go", "went", "gone"}) {
-			t.Errorf("verb subcard = %+v", c)
+	for _, strategy := range []Strategy{"", StrategyContext, StrategyRuEn} {
+		res := env.mustStart(t, StartParams{GroupID: g, Strategy: strategy})
+		if len(res.Cards) != 3 {
+			t.Fatalf("strategy %q: cards = %+v", strategy, res.Cards)
 		}
-	}
-	if n := len(byWord[plain]); n != 1 || byWord[plain][0].Example == nil {
-		t.Errorf("plain word cards = %+v", byWord[plain])
-	}
-	if n := len(byWord[bare]); n != 1 || byWord[bare][0].Example != nil {
-		t.Errorf("word without examples = %+v", byWord[bare])
+		byWord := map[int64]Card{}
+		for _, c := range res.Cards {
+			byWord[c.WordID] = c
+		}
+		if c := byWord[verb]; !reflect.DeepEqual(c.Examples, examples("I [go]", "I [went]", "I have [gone]")) ||
+			!reflect.DeepEqual(c.Forms, []string{"go", "went", "gone"}) {
+			t.Errorf("verb card = %+v", c)
+		}
+		if c := byWord[plain]; !reflect.DeepEqual(c.Examples, examples("An [apple]", "Red [apple]")) {
+			t.Errorf("plain card = %+v", c)
+		}
+		if c := byWord[bare]; c.WordID != bare || len(c.Examples) != 0 {
+			t.Errorf("word without examples = %+v", c)
+		}
+		var saved string
+		want := StrategyEnRu
+		if strategy == StrategyRuEn {
+			want = StrategyRuEn
+		}
+		if err := env.pool.QueryRow(context.Background(), "SELECT strategy FROM training_sessions WHERE id=$1", *res.SessionID).Scan(&saved); err != nil || saved != string(want) {
+			t.Fatalf("saved strategy=%q, want %q, err=%v", saved, want, err)
+		}
 	}
 }
 
@@ -440,19 +458,19 @@ func TestModule_HTTP(t *testing.T) {
 	var start struct {
 		SessionID *int64 `json:"sessionId"`
 		Cards     []struct {
-			WordID  int64    `json:"wordId"`
-			Forms   []string `json:"forms"`
-			Example *struct {
+			WordID   int64    `json:"wordId"`
+			Forms    []string `json:"forms"`
+			Examples []struct {
 				Sentence   string `json:"sentence"`
 				Highlights []struct{ Start, End int }
-			} `json:"example"`
+			} `json:"examples"`
 		} `json:"cards"`
 	}
 	if code := do("/api/training/start", fmt.Sprintf(`{"groupId":%d,"strategy":"context"}`, g), &start); code != 200 {
 		t.Fatalf("start: %d", code)
 	}
-	if start.SessionID == nil || len(start.Cards) != 1 || start.Cards[0].Example == nil ||
-		start.Cards[0].Example.Sentence != "I went home" || len(start.Cards[0].Forms) != 3 {
+	if start.SessionID == nil || len(start.Cards) != 1 || len(start.Cards[0].Examples) != 1 ||
+		start.Cards[0].Examples[0].Sentence != "I went home" || len(start.Cards[0].Forms) != 3 {
 		t.Fatalf("start body = %+v", start)
 	}
 	base := fmt.Sprintf("/api/training/%d", *start.SessionID)

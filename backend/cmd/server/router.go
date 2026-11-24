@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lexis/internal/achievements"
+	"lexis/internal/ambitions"
 	"lexis/internal/app"
 	"lexis/internal/focus"
 	"lexis/internal/groups"
@@ -22,6 +23,7 @@ import (
 	"lexis/internal/settings"
 	"lexis/internal/sport"
 	"lexis/internal/stats"
+	"lexis/internal/study"
 	"lexis/internal/tasks"
 	"lexis/internal/training"
 	"lexis/internal/words"
@@ -48,6 +50,8 @@ func modules(pool *pgxpool.Pool, clk clock.Clock, bus *eventbus.Bus) []app.Modul
 		habits.New(pool, clk),
 		tasks.New(pool, clk, bus),
 		sport.New(pool, clk),
+		ambitions.New(pool, clk),
+		study.New(pool, clk),
 		focus.New(pool, clk, tasksSvc, journal.NewService(pool, clk, habitsSvc), bus), // дела и дофамин дня — через узкие интерфейсы
 	}
 }

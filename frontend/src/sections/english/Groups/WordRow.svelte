@@ -7,37 +7,47 @@
 
   interface Props {
     word: Word
+    selecting?: boolean
+    selected?: boolean
+    ontoggle?: (w: Word) => void
     onedit: (w: Word) => void
     ondelete: (w: Word) => void
     onunarchive: (w: Word) => void
   }
-  let { word, onedit, ondelete, onunarchive }: Props = $props()
+  let { word, selecting = false, selected = false, ontoggle, onedit, ondelete, onunarchive }: Props = $props()
 </script>
 
-<li class="row">
+<li class="row" class:selecting class:selected={selecting && selected}>
+  {#if selecting}
+    <input class="select-word" type="checkbox" checked={selected} onchange={() => ontoggle?.(word)}
+      aria-label={t('groups.selection.word', { term: displayTerm(word.term, word.forms) })} />
+  {/if}
   <div class="text">
     <span class="term">{displayTerm(word.term, word.forms)}</span>
     <span class="translation muted">{word.translation}</span>
   </div>
   <LevelBadge level={word.level} />
-  <div class="actions">
+  {#if !selecting}<div class="actions">
     {#if word.level === 5}
       <Button size="sm" variant="ghost" icon="archive" title={t('words.unarchive')} aria-label={t('words.unarchive')} onclick={() => onunarchive(word)} />
     {/if}
     <Button size="sm" variant="ghost" icon="edit" title={t('words.edit')} aria-label={t('words.edit')} onclick={() => onedit(word)} />
     <Button size="sm" variant="ghost" icon="trash" title={t('words.delete')} aria-label={t('words.delete')} onclick={() => ondelete(word)} />
-  </div>
+  </div>{/if}
 </li>
 
 <style>
   .row {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
     gap: var(--s-3);
     padding: var(--s-2) var(--s-3);
     border-bottom: 1px solid var(--c-line);
   }
+  .row.selecting { grid-template-columns: auto minmax(0,1fr) auto; }
+  .row.selected { background: var(--c-green-soft); }
+  .select-word { width:18px; height:18px; accent-color:var(--c-green); cursor:pointer; }
   .row:hover {
     background: var(--c-surface-2);
   }
@@ -48,13 +58,11 @@
   }
   .term {
     font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
   .translation {
     font-size: var(--fs-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
   .actions {
     display: flex;

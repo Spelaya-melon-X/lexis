@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { latest } from '../../../lib/async'
   import { api } from '../../../lib/api/client'
   import type { Group, GroupChildren, GroupDetail, Range, Word } from '../../../lib/api/types'
@@ -16,6 +17,7 @@
   import ProductivityChart from './ProductivityChart.svelte'
   import WordEditDialog from './WordEditDialog.svelte'
   import WordRow from './WordRow.svelte'
+  import SelectedTrainingDialog from '../Training/SelectedTrainingDialog.svelte'
 
   // onchanged — после любой правки: список слева пересчитывает due/уровни/имя.
   // groups — всё дерево (из списка слева): хлебные крошки и подгруппы; onmove — «Переместить в…».
@@ -43,6 +45,30 @@
   let editing = $state<Word | null>(null)
   let deletingWord = $state<Word | null>(null)
   let wordBusy = $state(false)
+
+  let selectingWords = $state(false)
+  let selectedWords = $state(new Set<number>())
+  let selectedDialog = $state(false)
+  let wordList: HTMLUListElement | undefined = $state()
+  const selectedIds = $derived((detail?.words ?? []).filter(w => selectedWords.has(w.id)).map(w => w.id))
+
+  async function beginSelection() {
+    selectingWords = true
+    selectedWords = new Set()
+    await tick()
+    wordList?.scrollIntoView({ block: 'start' })
+    wordList?.querySelector('input')?.focus({ preventScroll: true })
+  }
+  function toggleWord(w: Word) {
+    const next = new Set(selectedWords)
+    if (!next.delete(w.id)) next.add(w.id)
+    selectedWords = next
+  }
+  function cancelSelection() {
+    selectingWords = false
+    selectedDialog = false
+    selectedWords = new Set()
+  }
 
   const fetchDetail = latest(api.groups.get)
 
@@ -172,6 +198,9 @@
         <Button variant="primary" icon="play" disabled={g.wordCount === 0} onclick={() => route.go('english', 'training', String(g.id))}>
           {t('groups.train')}
         </Button>
+        <Button icon="check" disabled={detail.words.length === 0 || selectingWords} onclick={beginSelection}>
+          {t('groups.selection.choose')}
+        </Button>
         <Button variant="ghost" icon="folder" aria-label={t('groups.move')} title={t('groups.move')} onclick={() => onmove(g)} />
         <Button variant="ghost" icon="trash" aria-label={t('groups.delete')} title={t('groups.delete')}
           onclick={() => { deleteChildren = 'lift'; confirmDeleteGroup = true }} />
@@ -212,14 +241,25 @@
       {#if detail.words.length === 0}
         <p class="muted empty">{t('groups.wordsEmpty')}</p>
       {:else}
-        <ul class="words">
+        {#if selectingWords}
+          <div class="selection-bar">
+            <strong role="status">{t('groups.selection.count', { count: selectedIds.length })}</strong>
+            <Button variant="ghost" size="sm" onclick={() => selectedWords = new Set((detail?.words ?? []).map(w => w.id))}>{t('groups.selection.all')}</Button>
+            <Button variant="ghost" size="sm" disabled={selectedIds.length === 0} onclick={() => selectedWords = new Set()}>{t('groups.selection.clear')}</Button>
+            <Button size="sm" variant="primary" icon="play" disabled={selectedIds.length === 0} onclick={() => selectedDialog = true}>{t('groups.selection.train')}</Button>
+            <Button variant="ghost" size="sm" onclick={cancelSelection}>{t('common.cancel')}</Button>
+          </div>
+        {/if}
+        <ul class="words" bind:this={wordList}>
           {#each detail.words as w (w.id)}
-            <WordRow word={w} onedit={(x) => (editing = x)} ondelete={(x) => (deletingWord = x)} onunarchive={unarchive} />
+            <WordRow word={w} selecting={selectingWords} selected={selectedWords.has(w.id)} ontoggle={toggleWord} onedit={(x) => (editing = x)} ondelete={(x) => (deletingWord = x)} onunarchive={unarchive} />
           {/each}
         </ul>
       {/if}
     </Card>
   </div>
+
+  {#if selectedDialog}<SelectedTrainingDialog group={g} wordIds={selectedIds} onclose={() => selectedDialog = false} onstarted={cancelSelection} />{/if}
 
   <ConfirmDialog open={confirmDeleteGroup} title={t('groups.deleteTitle', { name: g.name })} danger
     confirmText={t('common.delete')} loading={deletingGroup} onconfirm={deleteGroup} oncancel={() => (confirmDeleteGroup = false)}>
@@ -335,9 +375,16 @@
   }
   .head-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--s-3);
   }
+  .selection-bar {
+    display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-2);
+    padding:var(--s-3) var(--s-4); border-bottom:var(--bw) solid var(--c-line);
+    background:var(--c-surface-2); font-size:var(--fs-sm);
+  }
+  .selection-bar strong { margin-right:auto; }
   .tiles {
     display: grid;
     grid-template-columns: repeat(4, 1fr);

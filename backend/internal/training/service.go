@@ -42,6 +42,7 @@ type StartParams struct {
 	GroupID  int64    `json:"groupId"`
 	Strategy Strategy `json:"strategy"`
 	Free     bool     `json:"free"`
+	WordIDs  []int64  `json:"wordIds,omitempty"`
 }
 
 type StartResult struct {
@@ -56,11 +57,28 @@ func (s *Service) Start(ctx context.Context, p StartParams) (StartResult, error)
 	if p.GroupID <= 0 {
 		return StartResult{}, httpx.BadRequest("invalid_group", "groupId must be a positive id")
 	}
-	if !p.Strategy.Valid() {
+	if p.Strategy != "" && !p.Strategy.Valid() {
 		return StartResult{}, httpx.BadRequest("invalid_strategy", "strategy must be en_ru, ru_en or context")
 	}
+	if p.Strategy == "" || p.Strategy == StrategyContext {
+		p.Strategy = StrategyEnRu
+	}
 
-	q := store.New(s.pool)
+	ids, err := NormalizeSelection(p.WordIDs)
+	if err != nil {
+		return StartResult{}, err
+	}
+	p.WordIDs = ids
+	var result StartResult
+	err = pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
+		var err error
+		result, err = s.start(ctx, store.New(tx), p)
+		return err
+	})
+	return result, err
+}
+
+func (s *Service) start(ctx context.Context, q *store.Queries, p StartParams) (StartResult, error) {
 	exists, err := q.GroupExists(ctx, p.GroupID)
 	if err != nil {
 		return StartResult{}, fmt.Errorf("training start: %w", err)
@@ -75,7 +93,6 @@ func (s *Service) Start(ctx context.Context, p StartParams) (StartResult, error)
 		return StartResult{}, fmt.Errorf("training start: %w", err)
 	}
 	cards := Build(ws, BuildOptions{
-		Strategy: p.Strategy,
 		Now:      now,
 		NewLimit: newWordsLimit(ctx, q),
 		Free:     p.Free,
@@ -83,6 +100,9 @@ func (s *Service) Start(ctx context.Context, p StartParams) (StartResult, error)
 	})
 	if len(cards) == 0 {
 		return StartResult{Cards: cards}, nil
+	}
+	if err := loadExamples(ctx, q, cards); err != nil {
+		return StartResult{}, fmt.Errorf("training start: %w", err)
 	}
 
 	id, err := q.InsertSession(ctx, store.InsertSessionParams{
@@ -96,35 +116,46 @@ func (s *Service) Start(ctx context.Context, p StartParams) (StartResult, error)
 
 func (s *Service) sessionWords(ctx context.Context, q *store.Queries, p StartParams, now time.Time) ([]QueueWord, error) {
 	_, dayEnd := clock.DayBounds(now)
-	rows, err := q.ListSessionWords(ctx, store.ListSessionWordsParams{GroupID: p.GroupID, Free: p.Free, DayEnd: dayEnd})
+	// For an explicit selection load even archived/not-due words: membership must be
+	// checked for every requested id before Build applies the ordinary/free rules.
+	selected := p.WordIDs != nil
+	rows, err := q.ListSessionWords(ctx, store.ListSessionWordsParams{
+		GroupID: p.GroupID, Free: p.Free || selected, DayEnd: dayEnd, Selected: selected, WordIds: p.WordIDs,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list session words: %w", err)
 	}
+	if selected && len(rows) != len(p.WordIDs) {
+		return nil, httpx.BadRequest("invalid_word_selection", "all selected words must exist in the group subtree")
+	}
 	ws := make([]QueueWord, len(rows))
-	byID := make(map[int64]*QueueWord, len(rows))
-	ids := make([]int64, len(rows))
 	for i, r := range rows {
 		ws[i] = QueueWord{ID: r.ID, Term: r.Term, Forms: r.Forms, Translation: r.Translation, Level: r.Level, NextReviewAt: r.NextReviewAt}
-		byID[r.ID] = &ws[i]
-		ids[i] = r.ID
 	}
-	// Примеры нужны только стратегии context — для остальных лишний запрос не делаем.
-	if p.Strategy != StrategyContext || len(rows) == 0 {
-		return ws, nil
+	return ws, nil
+}
+
+func loadExamples(ctx context.Context, q *store.Queries, cards []Card) error {
+	byID := make(map[int64]*Card, len(cards))
+	ids := make([]int64, len(cards))
+	for i := range cards {
+		id := cards[i].WordID
+		byID[id] = &cards[i]
+		ids[i] = id
 	}
 	exs, err := q.ListExamplesByWordIDs(ctx, ids)
 	if err != nil {
-		return nil, fmt.Errorf("list examples: %w", err)
+		return fmt.Errorf("list examples: %w", err)
 	}
 	for _, e := range exs {
 		ex, code := words.ParseExample(e.Sentence)
 		if code != "" { // в БД только валидная разметка; если нет — показываем как есть
 			ex = words.Example{Text: e.Sentence, Sentence: e.Sentence}
 		}
-		w := byID[e.WordID]
-		w.Examples = append(w.Examples, ex)
+		card := byID[e.WordID]
+		card.Examples = append(card.Examples, ex)
 	}
-	return ws, nil
+	return nil
 }
 
 // newWordsLimit читает лимит из settings; нет ключа или мусор — DefaultNewLimit.
