@@ -34,22 +34,32 @@
   let draft = $state('')
   let adding = $state(false)
 
-  function onDragOver(e: DragEvent) {
-    if (dragId === null || !list) return
-    e.preventDefault()
-    const cards = [...list.querySelectorAll<HTMLElement>('[data-id]')].map((el) => {
+  function dropPosition(clientY: number, dragging: number) {
+    const cards = [...(list?.querySelectorAll<HTMLElement>('[data-id]') ?? [])].map((el) => {
       const r = el.getBoundingClientRect()
       return { id: Number(el.dataset.id), mid: r.top + r.height / 2 }
     })
-    dropAt = dropBefore(cards, e.clientY, dragId)
+    return dropBefore(cards, clientY, dragging)
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (dragId === null || !list) return
+    e.preventDefault()
+    dropAt = dropPosition(e.clientY, dragId)
   }
 
   function onDrop(e: DragEvent) {
+    if (dragId === null || !list) return
     e.preventDefault()
-    const at = dropAt
+    // Автопрокрутка может подвести новую колонку прямо перед отпусканием.
+    const before = dropPosition(e.clientY, dragId)
     dropAt = undefined
-    if (at !== undefined) ondrop(at)
+    ondrop(before)
   }
+
+  $effect(() => {
+    if (dragId === null) dropAt = undefined
+  })
 
   function onDragLeave(e: DragEvent) {
     // dragleave приходит и при переходе на дочерний элемент — сбрасываем, только когда курсор ушёл из колонки

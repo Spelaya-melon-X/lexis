@@ -1,7 +1,7 @@
 <script lang="ts">
   // «Задачи» (§18.3): доска со своими колонками, горизонтальный скролл, DnD дел между колонками.
   // Изменения порядка — оптимистично (lib/tasks.moveTask), ошибка → тост и перечитывание.
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { api } from '../../../lib/api/client'
   import type { Task, TaskColumn, TaskType } from '../../../lib/api/types'
   import Button from '../../../lib/components/Button.svelte'
@@ -34,6 +34,10 @@
   let busy = $state(false)
   let firstColumn = $state(t('game.defaultColumn'))
   let dragId = $state<number | null>(null)
+  let boardEl: HTMLDivElement | undefined = $state()
+  let scrollFrame: number | null = null
+  let lastFrame: number | null = null
+  let scrollSpeed = 0
   let splitting = $state<Task | null>(null)
   let graphFor = $state<number | null>(null)
   let graphVersion = $state(0) // +1 после правок — граф перечитывает дерево
@@ -207,6 +211,59 @@
     if (target) void move(task.id, target.column.id, null)
   }
 
+  function stopScroll() {
+    if (scrollFrame !== null) cancelAnimationFrame(scrollFrame)
+    scrollFrame = null
+    lastFrame = null
+    scrollSpeed = 0
+  }
+  onDestroy(stopScroll)
+
+  function endDrag() {
+    dragId = null
+    stopScroll()
+  }
+
+  function scrollBoard(time: number) {
+    scrollFrame = null
+    if (!boardEl || dragId === null || scrollSpeed === 0) return
+    const elapsed = lastFrame === null ? 16 : Math.min(time - lastFrame, 32)
+    lastFrame = time
+    const limit = boardEl.scrollWidth - boardEl.clientWidth
+    const next = Math.max(0, Math.min(limit, boardEl.scrollLeft + scrollSpeed * elapsed / 1000))
+    boardEl.scrollLeft = next
+    if (scrollSpeed > 0 ? next < limit : next > 0) {
+      scrollFrame = requestAnimationFrame(scrollBoard)
+    } else {
+      stopScroll()
+    }
+  }
+
+  function trackDrag(e: DragEvent) {
+    if (dragId === null || !boardEl) return
+    if (!(e.target instanceof Node) || !boardEl.contains(e.target) || boardEl.scrollWidth <= boardEl.clientWidth) {
+      stopScroll()
+      return
+    }
+    const { left, right } = boardEl.getBoundingClientRect()
+    const zone = Math.min(72, (right - left) / 3)
+    const distance = Math.min(e.clientX - left, right - e.clientX)
+    const direction = e.clientX < (left + right) / 2 ? -1 : 1
+    if (distance < 0 || distance >= zone) {
+      stopScroll()
+      return
+    }
+    // dragover может приходить редко, поэтому держим прокрутку между событиями.
+    scrollSpeed = direction * (120 + 840 * (1 - distance / zone))
+    if (scrollFrame === null) scrollFrame = requestAnimationFrame(scrollBoard)
+  }
+
+  function leaveBoard(e: DragEvent) {
+    // При переходе между вложенными элементами доски dragleave тоже всплывает.
+    const target = e.relatedTarget ?? document.elementFromPoint(e.clientX, e.clientY)
+    if (!(target instanceof Node) || !boardEl?.contains(target)) stopScroll()
+  }
+
   async function remove() {
     if (!deleting) return
     busy = true
@@ -240,6 +297,8 @@
   }
 </script>
 
+<svelte:window ondragover={trackDrag} ondragend={endDrag} ondrop={endDrag} />
+
 <div class="page">
   <header>
     <h1>{t('nav.game.board')}</h1>
@@ -267,7 +326,7 @@
       <Button type="submit" variant="primary" icon="plus">{t('game.createColumn')}</Button>
     </form>
   {:else}
-    <div class="board">
+    <div class="board" role="region" aria-label={t('nav.game.board')} bind:this={boardEl} ondragleave={leaveBoard}>
       {#each cols as col, i (col.column.id)}
         <Column
           {col}
@@ -284,10 +343,10 @@
           onside={side}
           onquickadd={(title) => quickAdd(col.column.id, title)}
           ondragstart={(task) => (dragId = task.id)}
-          ondragend={() => (dragId = null)}
+          ondragend={endDrag}
           ondrop={(before) => {
             const id = dragId
-            dragId = null
+            endDrag()
             if (id !== null) void move(id, col.column.id, before)
           }}
         />
